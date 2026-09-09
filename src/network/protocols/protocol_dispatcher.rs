@@ -1,4 +1,4 @@
-use crate::network::{packet::Packet, protocols::{disconnect_protocol::DisconnectProtocol, protocol::Protocol, protocol_id::ProtocolId::{self}}};
+use crate::network::{packet::packet::Packet, protocols::{disconnect_protocol::DisconnectProtocol, protocol::Protocol, protocol_id::ProtocolId::{self}}};
 use std::convert::TryFrom;
 use thiserror::Error;
 
@@ -75,8 +75,9 @@ impl TryFrom<ProtocolDispatcher> for Vec<Packet> {
 
 #[cfg(debug_assertions)]
 mod tests {
-    use crate::network::{packet::PacketHeader, protocols::protocol::Protocol};
-    use super::*;
+    use crate::network::packet::packet::PacketHeader;
+
+use super::*;
 
     #[test]
     fn test_try_from_success() {

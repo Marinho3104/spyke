@@ -1,13 +1,13 @@
 use std::collections::{HashMap, hash_map::Entry};
 
-use crate::network::{packet::{Packet, PacketId}, protocols::{protocol_dispatcher::ProtocolDispatcher, protocol_id::ProtocolId}};
+use crate::network::{packet::packet::{Packet, PacketId}, protocols::protocol_dispatcher::ProtocolDispatcher};
 use thiserror::Error;
 
 
 pub(crate) const MAX_CONCURRENT_REASSEMBLIES: usize = 16;
 
 #[derive(Debug, Error)]
-pub(crate) enum PacketReassemblerError {
+pub(crate) enum ProtocolReassemblerError {
 
     #[error("Max number of concurrent reassemblies reached!")]
     MaxNumberOfConcurrentReassembliesReached {},
@@ -72,11 +72,11 @@ impl ReassemblyProtocolData {
 
 }
 
-pub(crate) struct PacketReassembler {
+pub(crate) struct ProtocolReassembler {
     data: HashMap<PacketId, ReassemblyProtocolData>,
 }
 
-impl PacketReassembler {
+impl ProtocolReassembler {
 
     pub(crate) fn new() -> Self {
         Self {
@@ -84,11 +84,11 @@ impl PacketReassembler {
         }
     }
 
-    pub(crate) fn push(&mut self, packet: Packet) -> Result<Option<ProtocolDispatcher>, PacketReassemblerError> {
+    pub(crate) fn push(&mut self, packet: Packet) -> Result<Option<ProtocolDispatcher>, ProtocolReassemblerError> {
 
         if self.data.len() == MAX_CONCURRENT_REASSEMBLIES {
             return Err(
-                PacketReassemblerError::MaxNumberOfConcurrentReassembliesReached {  }
+                ProtocolReassemblerError::MaxNumberOfConcurrentReassembliesReached {  }
             );
         }
 
@@ -98,7 +98,7 @@ impl PacketReassembler {
 
                 if reassembly_protocol_data.sequence_total() != packet.headers().sequence_total() {
                     return Err(
-                        PacketReassemblerError::SequenceTotalDontMatchExistingSequenceTotalForSameId { 
+                        ProtocolReassemblerError::SequenceTotalDontMatchExistingSequenceTotalForSameId { 
                             given_sequence_total: packet.headers().sequence_total(), 
                             existing_sequence_total: reassembly_protocol_data.sequence_total() 
                         }
@@ -107,7 +107,7 @@ impl PacketReassembler {
 
                 if reassembly_protocol_data.packets().len() != packet.headers().sequence_index() as usize {
                     return Err(
-                        PacketReassemblerError::UnexpectedSequenceIndex { 
+                        ProtocolReassemblerError::UnexpectedSequenceIndex { 
                             expected_index: reassembly_protocol_data.packets().len() as u16, 
                             given_index: packet.headers().sequence_index() 
                         }
@@ -127,7 +127,7 @@ impl PacketReassembler {
                 
                 if sequence_total > ProtocolDispatcher::max_sequence_total(packet.headers().protocol_id()) {
                     return Err(
-                        PacketReassemblerError::SequenceTotalProvidedIsGreaterThanMaxDefined { 
+                        ProtocolReassemblerError::SequenceTotalProvidedIsGreaterThanMaxDefined { 
                             given: sequence_total, 
                             defined: ProtocolDispatcher::max_sequence_total(packet.headers().protocol_id()) 
                         }
@@ -149,7 +149,7 @@ impl PacketReassembler {
             None => Ok( None ),
             Some( reassembly_protocol_data_full ) => {
                 let reassembled_protocol = ProtocolDispatcher::try_from(reassembly_protocol_data_full.take_packets())
-                    .map_err(|err| PacketReassemblerError::ReassembleProtocolIssue { error_message: err.to_string() })?;
+                    .map_err(|err| ProtocolReassemblerError::ReassembleProtocolIssue { error_message: err.to_string() })?;
                 Ok( Some( reassembled_protocol ) )
             }
         }
@@ -158,13 +158,14 @@ impl PacketReassembler {
 
 #[cfg(debug_assertions)]
 mod tests {
-    use crate::network::{packet::PacketHeader, protocols::disconnect_protocol::DisconnectProtocol};
+
+use crate::network::{packet::packet::PacketHeader, protocols::{disconnect_protocol::DisconnectProtocol, protocol_id::ProtocolId}};
 
 use super::*;
 
     #[test]
     fn test_push_packet_get_protocol_success() {
-        let mut reassembler = PacketReassembler::new();
+        let mut reassembler = ProtocolReassembler::new();
 
         let disconnect_protocol = DisconnectProtocol {};
         let mut packets: Vec<Packet> = disconnect_protocol.into();
@@ -175,13 +176,13 @@ use super::*;
 
     #[test]
     fn test_packet_wrong_sequence_total_error() {
-        let mut reassembler = PacketReassembler::new();
+        let mut reassembler = ProtocolReassembler::new();
 
         let headers = PacketHeader::new(rand::random(), ProtocolId::DisconnectProtocol, 0, 2).expect("Expected Ok packet headers");
 	let payload = vec![0; 0];
 	let packet = Packet::new(headers, payload).expect("Expected Ok packet");
 
         let result = reassembler.push(packet);
-        assert!(matches!(result, Err(PacketReassemblerError::SequenceTotalProvidedIsGreaterThanMaxDefined { .. })));
+        assert!(matches!(result, Err(ProtocolReassemblerError::SequenceTotalProvidedIsGreaterThanMaxDefined { .. })));
     }
 }

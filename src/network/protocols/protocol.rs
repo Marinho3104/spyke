@@ -1,4 +1,5 @@
-use crate::network::{packet::Packet, protocols::{protocol_dispatcher::ProtocolDispatcher, protocol_id::ProtocolId}};
+use crate::network::{packet::packet::Packet, protocols::protocol_id::ProtocolId};
+
 
 pub(crate) trait Protocol: TryFrom<Vec<Packet>> {
     const PROTOCOL_ID: ProtocolId;

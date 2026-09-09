@@ -1,4 +1,4 @@
-use crate::network::{packet::{Packet, PacketHeader}, protocols::{protocol::Protocol, protocol_dispatcher::ProtocolDispatcherError, protocol_id::{self, ProtocolId::{self}}}};
+use crate::network::{packet::packet::{Packet, PacketHeader}, protocols::{protocol::Protocol, protocol_dispatcher::ProtocolDispatcherError, protocol_id::{self, ProtocolId::{self}}}};
 
 #[derive(Debug)]
 pub(crate) struct DisconnectProtocol;
@@ -63,7 +63,6 @@ impl From<DisconnectProtocol> for Vec<Packet> {
 
 #[cfg(debug_assertions)]
 mod tests {
-    use crate::network::packet::PacketHeader;
     use super::*;
 
     #[test]
