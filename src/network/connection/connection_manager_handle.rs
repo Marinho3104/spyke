@@ -1,19 +1,13 @@
 use tokio::sync::mpsc;
 
+use crate::utils::background_service_handle::BackgroundServiceHandler;
+
 
 pub(crate) enum ConnectionManagerCommand {
-    
+    Protocol(),   
 }
 
-pub(crate) struct ConnectionManagerHandle {
-    connection_manager_tx: mpsc::Sender<ConnectionManagerCommand>,
-}
+pub(crate) type ConnectionManagerHandle = BackgroundServiceHandler<ConnectionManagerCommand>;
 
-impl ConnectionManagerHandle {
-    
-    pub(crate) fn new(connection_manager_tx: mpsc::Sender<ConnectionManagerCommand>) -> Self {
-        Self {
-            connection_manager_tx
-        }
-    }
+impl BackgroundServiceHandler<ConnectionManagerCommand> {
 }
