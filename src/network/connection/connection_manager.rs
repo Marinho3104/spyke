@@ -67,20 +67,14 @@ impl ConnectionManager {
                             Ok(accepted_connection) => self.handle_accepted_connection(accepted_connection),
                             Err(ServerError::TimeoutReachedOnAccept) => {} // Timeout reached just loop again
                             Err(ServerError::NonFatalAcceptError { .. }) => {} // No fatal error occur just ignore
-                            Err(err) => {
-                                log_info!("A fatal error occur on the server object, exiting from run loop! Error: {err}");
-                                break;
-                            }
+                            Err(err) => panic!("A fatal error occur on the server object, exiting from run loop! Error: {err}")
                         }
                 }
 
                 command = rx.recv() => {
                     match command {
                         Some(command) => self.handle_command(command),
-                        None => {
-                            log_info!("Connection manager communication channel was closed, exiting from the run loop!");
-                            break;
-                        }
+                        None => panic!("Connection manager communication channel was closed, exiting from the run loop!")
                     }
                 }
             }

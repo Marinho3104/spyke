@@ -180,7 +180,7 @@ use super::*;
 
         let headers = PacketHeader::new(rand::random(), ProtocolId::DisconnectProtocol, 0, 2).expect("Expected Ok packet headers");
 	let payload = vec![0; 0];
-	let packet = Packet::new(headers, payload).expect("Expected Ok packet");
+	let packet = Packet::try_new(headers, payload).expect("Expected Ok packet");
 
         let result = reassembler.push(packet);
         assert!(matches!(result, Err(ProtocolReassemblerError::SequenceTotalProvidedIsGreaterThanMaxDefined { .. })));

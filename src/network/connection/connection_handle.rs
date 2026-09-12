@@ -1,10 +1,10 @@
-use crate::utils::background_service_handle::BackgroundServiceHandler;
+use crate::utils::background_service_handle::BackgroundServiceHandle;
 
 pub(crate) enum ConnectionCommand {
     
 }
 
 
-pub(crate) type ConnectionHandle = BackgroundServiceHandler<ConnectionCommand>;
+pub(crate) type ConnectionHandle = BackgroundServiceHandle<ConnectionCommand>;
 
-impl BackgroundServiceHandler<ConnectionCommand> {}
+impl BackgroundServiceHandle<ConnectionCommand> {}

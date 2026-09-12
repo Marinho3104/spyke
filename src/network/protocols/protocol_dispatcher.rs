@@ -83,7 +83,7 @@ use super::*;
     fn test_try_from_success() {
         let headers = PacketHeader::new(rand::random(), ProtocolId::DisconnectProtocol, 0, 1).expect("Expected Ok packet headers");
 	let payload = vec![0; 0];
-	let packets = vec![Packet::new(headers, payload).expect("Expected Ok packet")];
+	let packets = vec![Packet::try_new(headers, payload).expect("Expected Ok packet")];
         let result = ProtocolDispatcher::try_from(packets).expect("Expected Ok Protocol Dispatcher");
         assert!(matches!(result, ProtocolDispatcher::DisconnectProtocol(_)));
     }

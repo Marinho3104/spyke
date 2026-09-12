@@ -1,9 +1,9 @@
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use borsh::{BorshDeserialize, BorshSerialize};
 
-#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Hash)]
-#[repr(u16)]
+#[derive(Debug, BorshSerialize, BorshDeserialize, Copy, Clone, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub(crate) enum ProtocolId {
     DisconnectProtocol,
 }

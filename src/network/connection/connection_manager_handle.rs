@@ -1,32 +1,40 @@
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-use crate::{network::{connection::connection::ConnectionId, protocols::protocol_dispatcher::ProtocolDispatcher}, utils::background_service_handle::BackgroundServiceHandler};
+use crate::{network::{connection::connection::ConnectionId, protocols::protocol_dispatcher::ProtocolDispatcher}, utils::background_service_handle::{BackgroundServiceHandle, BackgroundServiceHandleError}};
 
 #[derive(Debug, Error)]
 pub(crate) enum ConnectionManagerHandleError {
-
-    #[error("Packet sequence index must be less than sequence total: {sequence_index} >= {sequence_total}")]
-    SequenceIndexShouldBeLessThanSequenceTotal {
-        sequence_index: u16,
-        sequence_total: u16
-    },
+    #[error("Background Service Handle error: {0}")]
+    BackgroundServerHandle(#[from] BackgroundServiceHandleError),
 }
 
 
 pub(crate) enum ConnectionManagerCommand {
-    HandleProtocol {
+    Protocol {
         protocol: ProtocolDispatcher, 
         connection_id: ConnectionId
     },
+    RemoveConnection {
+        connection_id: ConnectionId,
+        notify_connection: bool
+    }
 }
 
-pub(crate) type ConnectionManagerHandle = BackgroundServiceHandler<ConnectionManagerCommand>;
+pub(crate) type ConnectionManagerHandle = BackgroundServiceHandle<ConnectionManagerCommand>;
 
-impl BackgroundServiceHandler<ConnectionManagerCommand> {
+impl BackgroundServiceHandle<ConnectionManagerCommand> {
 
-    pub(crate) async fn handle_protocol(protocol: ProtocolDispatcher, connection_id: ConnectionId) {
+    pub(crate) async fn protocol(&mut self, protocol: ProtocolDispatcher, connection_id: ConnectionId) -> Result<(), ConnectionManagerHandleError>  {
+        let command = ConnectionManagerCommand::Protocol { protocol, connection_id };
+        self.send(command).await?;
+        Ok(())
+    }
 
+    pub(crate) async fn remove_connection(&mut self, connection_id: ConnectionId, notify_connection: bool) -> Result<(), ConnectionManagerHandleError> {
+        let command = ConnectionManagerCommand::RemoveConnection { connection_id, notify_connection };
+        self.send(command).await?;
+        Ok(())
     }
 
 }

@@ -1,14 +1,19 @@
 use std::net::SocketAddr;
 
+use futures_util::StreamExt;
 use thiserror::Error;
 use tokio::net::TcpStream;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-use crate::network::{connection::connection_manager_handle::ConnectionManagerHandle, packet::{packet::{self, Packet, ReadPacketTimeouts}, protocol_reassembler::ProtocolReassembler}};
+use crate::network::{connection::{connection_handle::ConnectionCommand, connection_manager_handle::{ConnectionManagerCommand, ConnectionManagerHandle}}, packet::{packet::{self, Packet, PacketError, PacketHeader}, protocol_reassembler::ProtocolReassembler}, protocols::{disconnect_protocol, protocol_dispatcher::ProtocolDispatcher, protocol_id::ProtocolId::DisconnectProtocol}};
 
 pub(crate) type ConnectionId = u64;
 
 #[derive(Debug, Error)]
 pub(crate) enum ConnectionError {
+
+    #[error("Packet error: {0}")]
+    Packet(#[from] PacketError),
 
     #[error("Not able to establish connection with given address: {addr} with error: {error_message}")]
     NotAbleToEstablishConnectionWithGivenAddress {
@@ -16,26 +21,28 @@ pub(crate) enum ConnectionError {
         error_message: String,
     },
 
+    #[error("Connection was closed")]
+    ConnectionWasClosed,
+
+    #[error("Frame next call fail with error: {error_message}")]
+    FrameNextCall {
+        error_message: String
+    },
+
 }
 
 pub(crate) struct ConnectionConfig {
-    read_packet_timeout: Option<ReadPacketTimeouts>,
     addr: SocketAddr,
     id: ConnectionId,
 }
 
 impl ConnectionConfig {
 
-    pub(crate) fn new(read_packet_timeout: Option<ReadPacketTimeouts>, addr: SocketAddr, id: ConnectionId) -> Self {
+    pub(crate) fn new(addr: SocketAddr, id: ConnectionId) -> Self {
         Self {
-            read_packet_timeout,
             addr,
             id
         }
-    }
-
-    pub(crate) fn read_packet_timeout(&self) -> &Option<ReadPacketTimeouts> {
-        &self.read_packet_timeout
     }
 
     pub(crate) fn addr(&self) -> SocketAddr {
@@ -49,7 +56,7 @@ impl ConnectionConfig {
 
 pub(crate) struct Connection {
     config: ConnectionConfig,
-    stream: TcpStream, 
+    framed_stream: Framed<TcpStream, LengthDelimitedCodec>,
     protocol_reassembler: ProtocolReassembler,
     connection_manager_handle: ConnectionManagerHandle,
 }
@@ -59,7 +66,7 @@ impl Connection {
     pub(crate) fn new(config: ConnectionConfig, stream: TcpStream, connection_manager_handle: ConnectionManagerHandle) -> Self {
         Self {
             config,
-            stream,
+            framed_stream: Framed::new(stream, Self::codec()),
             protocol_reassembler: ProtocolReassembler::new(),
             connection_manager_handle
         }
@@ -73,19 +80,47 @@ impl Connection {
     }
 
     pub(crate) fn local_addr(&self) -> Result<SocketAddr, std::io::Error> {
-        self.stream.local_addr()
+        self.framed_stream.get_ref().local_addr()
     }
 
     pub(crate) fn peer_addr(&self) -> Result<SocketAddr, std::io::Error> {
-        self.stream.peer_addr()
+        self.framed_stream.get_ref().peer_addr()
     }
 
     pub(crate) async fn run(mut self) {
         loop {
             tokio::select! {
-                _packet = Packet::read_packet(&mut self.stream, None) => {}
+                packet = Connection::read_packet(&mut self.framed_stream) => match packet {
+                    Ok(packet) => Self::handle_packet(packet, &mut self.protocol_reassembler, &mut self.connection_manager_handle).await,
+                    Err(..) => {
+                        self.connection_manager_handle.remove_connection(self.config.id(), false).await
+                            .expect("The connection manager should not be dropped if connection is still alive");
+                        break;
+                    }
+                }
             }
         }
+    }
+
+    async fn read_packet(framed_stream: &mut Framed<TcpStream, LengthDelimitedCodec>) -> Result<Packet, ConnectionError> {
+        let encoded_packet = framed_stream.next().await
+            .ok_or(ConnectionError::ConnectionWasClosed)?
+            .map_err(|err| ConnectionError::FrameNextCall { error_message: err.to_string() })?;
+        let decoded_packet = Packet::decode(&encoded_packet)?;
+
+        Ok(decoded_packet)
+    }
+
+    async fn handle_packet(packet: Packet, protocol_reassembler: &mut ProtocolReassembler, connection_manager_handle: &mut ConnectionManagerHandle) {
+        // let protocol = protocol_reassembler.push
+    }
+
+    fn codec() -> LengthDelimitedCodec {
+        LengthDelimitedCodec::builder()
+            .length_field_type::<u16>()
+            .little_endian()
+            .max_frame_length(Packet::MAX_PAYLOAD_SIZE + PacketHeader::SERIALIZED_SIZE)
+            .new_codec()
     }
 
 }
@@ -120,7 +155,7 @@ use crate::network::connection::{connection::{Connection, ConnectionConfig}, con
         let (tx, _rx) = mpsc::channel::<ConnectionManagerCommand>(32);
         let connection_manager_handle = ConnectionManagerHandle::new(tx);
 
-        let connection_config = ConnectionConfig::new(None, addr1, 0);
+        let connection_config = ConnectionConfig::new(addr1, 0);
         let connection = Connection::from(connection_config, connection_manager_handle).await;
         assert!(matches!(connection, Ok(Connection { .. })));
     }
@@ -132,10 +167,10 @@ use crate::network::connection::{connection::{Connection, ConnectionConfig}, con
             0,
         );
 
-        let (tx, rx) = mpsc::channel::<ConnectionManagerCommand>(32);
+        let (tx, _rx) = mpsc::channel::<ConnectionManagerCommand>(32);
         let connection_manager_handle = ConnectionManagerHandle::new(tx);
 
-        let connection_config = ConnectionConfig::new(None, addr, 0);
+        let connection_config = ConnectionConfig::new(addr, 0);
 
         let connection = Connection::from(connection_config, connection_manager_handle).await;
         assert!(matches!(connection, Err(..)));

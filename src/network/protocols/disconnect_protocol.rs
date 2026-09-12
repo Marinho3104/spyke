@@ -54,7 +54,7 @@ impl From<DisconnectProtocol> for Vec<Packet> {
         let headers = PacketHeader::new(rand::random(), ProtocolId::DisconnectProtocol, 0, 1)
             .expect("Packet header values are hardcoded, should never fail");
         let payload = vec![0; 0];
-        let packet = Packet::new(headers, payload)
+        let packet = Packet::try_new(headers, payload)
             .expect("Packet values are harcodedm should never fail");
         vec![packet]
     }
@@ -69,7 +69,7 @@ mod tests {
     fn test_try_from_success() {
         let headers = PacketHeader::new(rand::random(), ProtocolId::DisconnectProtocol, 0, 1).expect("Expected Ok packet headers");
         let payload = vec![0; 0];
-        let packets = vec![Packet::new(headers, payload).expect("Expected Ok packet")];
+        let packets = vec![Packet::try_new(headers, payload).expect("Expected Ok packet")];
 	let result = DisconnectProtocol::try_from(packets);
         assert!(result.is_ok());
     }
@@ -112,7 +112,7 @@ mod tests {
     fn test_try_from_unexpected_payload_error() {
         let headers = PacketHeader::new(rand::random(), ProtocolId::DisconnectProtocol, 0, 1).expect("Expected Ok packet headers");
         let payload = vec![0; 1];
-        let packets = vec![Packet::new(headers, payload).expect("Expected Ok packet")];
+        let packets = vec![Packet::try_new(headers, payload).expect("Expected Ok packet")];
         let result = DisconnectProtocol::try_from(packets);
         assert!(
             matches!( result, Err( ProtocolDispatcherError::UnexpectedPayload { .. }) )
