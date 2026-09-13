@@ -55,7 +55,7 @@ impl From<DisconnectProtocol> for Vec<Packet> {
             .expect("Packet header values are hardcoded, should never fail");
         let payload = vec![0; 0];
         let packet = Packet::try_new(headers, payload)
-            .expect("Packet values are harcodedm should never fail");
+            .expect("Packet values are harcoded should never fail");
         vec![packet]
     }
     

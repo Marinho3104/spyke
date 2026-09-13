@@ -1,10 +1,34 @@
-use crate::utils::background_service_handle::BackgroundServiceHandle;
+use thiserror::Error;
 
+use crate::{network::packet::packet::Packet, utils::background_service_handle::{BackgroundServiceHandle, BackgroundServiceHandleError, OnErrorResult}};
+
+#[derive(Debug, Error)]
+pub(crate) enum ConnectionHandleError {
+    #[error("Background Service Handle error: {0}")]
+    BackgroundServerHandle(#[from] BackgroundServiceHandleError),
+}
+
+#[derive(Debug)]
 pub(crate) enum ConnectionCommand {
-    
+    SendPacket(Vec<Packet>),
+    Shutdown(bool),
 }
 
 
-pub(crate) type ConnectionHandle = BackgroundServiceHandle<ConnectionCommand>;
+pub(crate) type ConnectionHandle = BackgroundServiceHandle<ConnectionCommand, OnErrorResult>;
 
-impl BackgroundServiceHandle<ConnectionCommand> {}
+impl BackgroundServiceHandle<ConnectionCommand, OnErrorResult> {
+
+    pub(crate) async fn send_packets(&mut self, packets: Vec<Packet>) -> Result<(), ConnectionHandleError> {
+        let command = ConnectionCommand::SendPacket(packets);
+        self.send(command).await?;
+        Ok(())
+    }
+
+    pub(crate) async fn shutdown(&mut self, notify_peer: bool) -> Result<(), ConnectionHandleError> {
+        let command = ConnectionCommand::Shutdown(notify_peer);
+        self.send(command).await?;
+        Ok(())
+    }
+
+}

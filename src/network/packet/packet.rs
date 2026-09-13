@@ -125,9 +125,9 @@ impl Packet {
 	&self.payload
     }
 
-    pub(crate) fn encode(&self) -> Result<Vec<u8>, PacketError> {
+    pub(crate) fn encode(&self) -> Vec<u8> {
         borsh::to_vec(self)
-            .map_err(|err| PacketError::Serialize { error_message: err.to_string() } )
+            .expect("Encoding should never fail under normal circumstances, the packet is validated when first created!")
     }
 
     pub(crate) fn decode(data: &[u8]) -> Result<Packet, PacketError> {
@@ -197,8 +197,7 @@ mod tests {
         let headers = PacketHeader::new(rand::random(), ProtocolId::DisconnectProtocol, 0, 1).expect("Expected Ok packet headers");
         let payload = vec![0];
 	let packet = Packet::try_new(headers, payload).expect("Expected Ok packet");
-        let encoded_data = packet.encode();
-        assert!(encoded_data.is_ok());
+        packet.encode();
     }
 
     #[test]
@@ -206,7 +205,7 @@ mod tests {
         let headers = PacketHeader::new(rand::random(), ProtocolId::DisconnectProtocol, 0, 1).expect("Expected Ok packet headers");
         let payload = vec![0];
 	let packet = Packet::try_new(headers, payload).expect("Expected Ok packet");
-        let encoded_data = packet.encode().expect("Expected serialized Ok");
+        let encoded_data = packet.encode();
 
         let decoded_packet = Packet::decode(&encoded_data);
         assert!(decoded_packet.is_ok())
