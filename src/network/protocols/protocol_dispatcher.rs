@@ -30,7 +30,7 @@ pub(crate) enum ProtocolDispatcherError {
 
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum ProtocolDispatcher {
     DisconnectProtocol(DisconnectProtocol)
 }

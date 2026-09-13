@@ -37,11 +37,8 @@ pub(crate) enum ConnectionError {
         error_message: String
     },
 
-    // This is not an actual error, but is being implemented as so
-    // to reuse alright existing logic to close the run loop correctly
-    #[error("Connection is shutting down")]
-    Shutdown,
-
+    #[error("All communication queue senders were dropped")]
+    CommunicationQueueSender,
 }
 
 pub(crate) struct ConnectionConfig {
@@ -107,12 +104,6 @@ impl Connection {
         self.framed_stream.get_ref().peer_addr()
     }
 
-    async fn shutdown(mut self, notify_connection_manager: bool) {
-        if notify_connection_manager {
-            self.connection_manager_handle.remove_connection(self.config.id(), false).await;
-        }
-    }
-
     pub(crate) fn spawn(self) -> ConnectionHandle {
         let (tx, rx) = mpsc::channel::<ConnectionCommand>(self.config.communication_queue_size());
 
@@ -130,7 +121,14 @@ impl Connection {
 
             if let Err(err) = result {
                 log_error!("Connection run loop reached a error, exiting! Error: {err}");
-                self.shutdown(!matches!(err, ConnectionError::Shutdown)).await;
+                
+                // The actual result if the message was sent succesfully or
+                // not does not matter cause we are closing this connection
+                let _ = self.send_packets(&DisconnectProtocol.into()).await;
+                if !matches!(err, ConnectionError::CommunicationQueueSender) {
+                    self.connection_manager_handle.remove_connection(self.config.id()).await;
+                }
+
                 break;
             }
         }
@@ -182,18 +180,10 @@ impl Connection {
     async fn handle_command(&mut self, command: Option<ConnectionCommand>) -> Result<(), ConnectionError> {
         log_info!("Handling command: {:?}", command);
         let command = command
-            .expect("Connection manager should never drop the channel of communication while connection is still alive!");
+            .ok_or(ConnectionError::CommunicationQueueSender)?;
 
         match command {
             ConnectionCommand::SendPacket(packets) => self.send_packets(&packets).await?,
-            ConnectionCommand::Shutdown(notify_peer) => { 
-                if notify_peer {
-                    // We are shutting down the connection, 
-                    // doesn't really matter if this is sent or not
-                    let _ = self.send_packets(&DisconnectProtocol.into()).await;
-                }
-                Err(ConnectionError::Shutdown)? 
-            }
         }
 
         log_success!("Command handled!");
@@ -400,7 +390,7 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
     }
 
     #[tokio::test]
-    async fn test_command_shutdown_success() {
+    async fn test_connection_manager_drop_communication_channel_shutdown_success() {
         let addr = SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             0,
@@ -435,7 +425,7 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
             let protocol: ProtocolDispatcher = packets.try_into()
                 .expect("Expected ok try into");
 
-            assert!(matches!(protocol, ProtocolDispatcher::DisconnectProtocol(DisconnectProtocol { .. })))
+            assert!(matches!(protocol, ProtocolDispatcher::DisconnectProtocol(DisconnectProtocol)))
         });
 
         let (tx, _rx) = mpsc::channel::<ConnectionManagerCommand>(32);
@@ -445,10 +435,9 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
         let connection = Connection::from(connection_config, connection_manager_handle).await
             .expect("Expected Connection Ok");
 
-        let mut connection_handle = connection.spawn();
+        let connection_handle = connection.spawn();
 
-        connection_handle.shutdown(true).await
-            .expect("Expected shutdown command sent OK");
+        drop(connection_handle);
 
         task.await
             .expect("Expected task to not fail");
@@ -489,7 +478,7 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
         let command = rx.recv().await
             .expect("Expected Command Ok");
 
-        assert!(matches!(command, ConnectionManagerCommand::RemoveConnection { connection_id: 0, notify_connection: false }));
+        assert!(matches!(command, ConnectionManagerCommand::RemoveConnection { connection_id: 0 }));
         task.abort();
     }
 }

@@ -1,6 +1,6 @@
 use crate::network::{packet::packet::{Packet, PacketHeader}, protocols::{protocol::Protocol, protocol_dispatcher::ProtocolDispatcherError, protocol_id::{self, ProtocolId::{self}}}};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct DisconnectProtocol;
 
 impl Protocol for DisconnectProtocol {

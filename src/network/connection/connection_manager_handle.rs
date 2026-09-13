@@ -1,9 +1,9 @@
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-use crate::{network::{connection::connection::ConnectionId, protocols::protocol_dispatcher::ProtocolDispatcher}, utils::background_service_handle::{BackgroundServiceHandle, BackgroundServiceHandleError, OnErrorPanic}};
+use crate::{network::{connection::connection::ConnectionId, packet::packet::Packet, protocols::protocol_dispatcher::ProtocolDispatcher}, utils::background_service_handle::{BackgroundServiceHandle, BackgroundServiceHandleError, OnErrorPanic}};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum ConnectionManagerCommand {
     Protocol {
         protocol: ProtocolDispatcher, 
@@ -11,7 +11,10 @@ pub(crate) enum ConnectionManagerCommand {
     },
     RemoveConnection {
         connection_id: ConnectionId,
-        notify_connection: bool
+    },
+    SendPackets {
+        connection_id: ConnectionId,
+        packets: Vec<Packet>,
     }
 }
 
@@ -24,8 +27,8 @@ impl BackgroundServiceHandle<ConnectionManagerCommand, OnErrorPanic> {
         self.send(command).await;
     }
 
-    pub(crate) async fn remove_connection(&mut self, connection_id: ConnectionId, notify_connection: bool) {
-        let command = ConnectionManagerCommand::RemoveConnection { connection_id, notify_connection };
+    pub(crate) async fn remove_connection(&mut self, connection_id: ConnectionId) {
+        let command = ConnectionManagerCommand::RemoveConnection { connection_id };
         self.send(command).await;
     }
 

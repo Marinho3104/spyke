@@ -11,7 +11,6 @@ pub(crate) enum ConnectionHandleError {
 #[derive(Debug)]
 pub(crate) enum ConnectionCommand {
     SendPacket(Vec<Packet>),
-    Shutdown(bool),
 }
 
 
@@ -24,11 +23,4 @@ impl BackgroundServiceHandle<ConnectionCommand, OnErrorResult> {
         self.send(command).await?;
         Ok(())
     }
-
-    pub(crate) async fn shutdown(&mut self, notify_peer: bool) -> Result<(), ConnectionHandleError> {
-        let command = ConnectionCommand::Shutdown(notify_peer);
-        self.send(command).await?;
-        Ok(())
-    }
-
 }
