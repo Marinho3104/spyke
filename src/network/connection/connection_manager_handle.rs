@@ -1,7 +1,7 @@
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-use crate::{network::{connection::connection::ConnectionId, packet::packet::Packet, protocols::protocol_dispatcher::ProtocolDispatcher}, utils::background_service_handle::{BackgroundServiceHandle, BackgroundServiceHandleError, OnErrorPanic}};
+use crate::{network::{connection::connection::ConnectionId, packet::packet::Packet, protocols::protocol_dispatcher::ProtocolDispatcher}, utils::background_service_handle::{BackgroundServiceHandle, BackgroundServiceHandleError, OnSendErrorPanic}};
 
 #[derive(Debug, Clone)]
 pub(crate) enum ConnectionManagerCommand {
@@ -18,9 +18,9 @@ pub(crate) enum ConnectionManagerCommand {
     }
 }
 
-pub(crate) type ConnectionManagerHandle = BackgroundServiceHandle<ConnectionManagerCommand, OnErrorPanic>;
+pub(crate) type ConnectionManagerHandle = BackgroundServiceHandle<ConnectionManagerCommand, OnSendErrorPanic>;
 
-impl BackgroundServiceHandle<ConnectionManagerCommand, OnErrorPanic> {
+impl BackgroundServiceHandle<ConnectionManagerCommand, OnSendErrorPanic> {
 
     pub(crate) async fn protocol(&mut self, protocol: ProtocolDispatcher, connection_id: ConnectionId) {
         let command = ConnectionManagerCommand::Protocol { protocol, connection_id };

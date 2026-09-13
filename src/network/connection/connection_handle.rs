@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+
 use thiserror::Error;
 
-use crate::{network::packet::packet::Packet, utils::background_service_handle::{BackgroundServiceHandle, BackgroundServiceHandleError, OnErrorResult}};
+use crate::{network::{connection::{connection::ConnectionId, connection_manager::ConnectionEntry}, packet::packet::Packet}, utils::background_service_handle::{BackgroundServiceHandle, BackgroundServiceHandleError, CallBack, OnErrorResult, OnSendErrorCallback}};
 
 #[derive(Debug, Error)]
 pub(crate) enum ConnectionHandleError {
@@ -13,14 +15,28 @@ pub(crate) enum ConnectionCommand {
     SendPacket(Vec<Packet>),
 }
 
+pub(crate) struct ConnectionHandleCallBackInput<'a> {
+    connections: &'a mut HashMap<ConnectionId, ConnectionEntry>,
+    connection_id: &'a ConnectionId
+}
 
-pub(crate) type ConnectionHandle = BackgroundServiceHandle<ConnectionCommand, OnErrorResult>;
+#[derive(Clone)]
+struct ConnectionHandleCallBack {}
 
-impl BackgroundServiceHandle<ConnectionCommand, OnErrorResult> {
+impl CallBack for ConnectionHandleCallBack {
+    type Input<'a> = ConnectionHandleCallBackInput<'a>;
 
-    pub(crate) async fn send_packets(&mut self, packets: Vec<Packet>) -> Result<(), ConnectionHandleError> {
+    fn callback(input: Self::Input<'_>) {
+        input.connections.remove(input.connection_id);
+    }
+}
+
+pub(crate) type ConnectionHandle = BackgroundServiceHandle<ConnectionCommand, OnSendErrorCallback<ConnectionHandleCallBack>>;
+
+impl BackgroundServiceHandle<ConnectionCommand, OnSendErrorCallback<ConnectionHandleCallBack>> {
+
+    pub(crate) async fn send_packets(&mut self, packets: Vec<Packet>, input: ConnectionHandleCallBackInput<'_>) {
         let command = ConnectionCommand::SendPacket(packets);
-        self.send(command).await?;
-        Ok(())
+        self.send(command, input).await;
     }
 }

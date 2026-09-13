@@ -3,7 +3,7 @@ use std::{collections::HashMap, net::SocketAddr, time::Duration};
 use thiserror::Error;
 use tokio::{net::{TcpListener, TcpStream}, sync::mpsc};
 
-use crate::network::connection::{connection::{Connection, ConnectionConfig, ConnectionId}, connection_handle::ConnectionHandle, connection_manager_handle::{ConnectionManagerCommand, ConnectionManagerHandle}, server::{Server, ServerError}};
+use crate::network::connection::{connection::{Connection, ConnectionConfig, ConnectionId}, connection_handle::{ConnectionHandle, ConnectionHandleCallBack, ConnectionHandleCallBackInput}, connection_manager_handle::{ConnectionManagerCommand, ConnectionManagerHandle}, server::{Server, ServerError}};
 use crate::diagnostics::logs::log_info;
 
 #[derive(Debug, Error)]
@@ -16,7 +16,7 @@ pub(crate) enum ConnectionManagerError {
     CommunicationQueueSender,
 }
 
-struct ConnectionEntry {
+pub(crate) struct ConnectionEntry {
     handle: ConnectionHandle,
 }
 
@@ -160,7 +160,13 @@ impl ConnectionManager {
             ConnectionManagerCommand::RemoveConnection { connection_id } => self.remove_connection(connection_id),
             ConnectionManagerCommand::SendPackets { connection_id, packets } => 
                 if let Some(connection_entry) = self.connections.get_mut(&connection_id) {
-                    connection_entry.handle().send_packets(packets).await;
+                    connection_entry.handle().send_packets(
+                        packets, 
+                        ConnectionHandleCallBackInput {
+                            connections: &mut self.connections,
+
+                        }
+                    ).await;
                 }
         }
 
