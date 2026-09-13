@@ -9,7 +9,10 @@ pub(crate) enum BackgroundServiceHandleError {
     AllReceiversWereDrop,
 }
 
+#[derive(Clone)]
 pub(crate) struct OnErrorPanic {}
+
+#[derive(Clone)]
 pub(crate) struct OnErrorResult {}
 
 pub(crate) trait OnError {}
@@ -58,6 +61,14 @@ mod tests {
     use tokio::sync::mpsc;
 
 use crate::utils::background_service_handle::{BackgroundServiceHandle, BackgroundServiceHandleError, OnErrorPanic, OnErrorResult};
+
+    #[tokio::test]
+    async fn test_clone_handle_success() {
+        let (tx, _rx) = mpsc::channel::<u32>(10);
+
+        let handle = BackgroundServiceHandle::<u32, OnErrorResult>::from(tx);
+        let _handle_clone = handle.clone();
+    }
 
     #[tokio::test]
     async fn test_send_command_on_error_result_success() {
