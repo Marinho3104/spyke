@@ -15,22 +15,13 @@ pub(crate) struct OnSendErrorPanic {}
 #[derive(Clone)]
 pub(crate) struct OnSendErrorResult {}
 
-pub(crate) trait CallBack {
-    type Input<'a>;
-
-    fn callback(input: Self::Input<'_>);
-}
-
 #[derive(Clone)]
-pub(crate) struct OnSendErrorCallback<CB> 
-    where CB: Clone + CallBack {
-        _callback: PhantomData<CB>,
-}
+pub(crate) struct OnSendErrorCallback {}
 
 pub(crate) trait OnSendError {}
 impl OnSendError for OnSendErrorPanic {}
 impl OnSendError for OnSendErrorResult {}
-impl<CB: Clone + CallBack> OnSendError for OnSendErrorCallback<CB> {}
+impl OnSendError for OnSendErrorCallback {}
 
 #[derive(Clone)]
 pub(crate) struct BackgroundServiceHandle<C, O: OnSendError> {
@@ -61,10 +52,10 @@ impl<C> BackgroundServiceHandle<C, OnSendErrorResult> {
     }
 }
 
-impl<C, CB: CallBack + Clone> BackgroundServiceHandle<C, OnSendErrorCallback<CB>> {
-    pub(crate) async fn send(&mut self, command: C, input: CB::Input<'_>) {
+impl<C> BackgroundServiceHandle<C, OnSendErrorCallback> {
+    pub(crate) async fn send<F: FnMut()>(&mut self, command: C, mut callback: F) {
         if self.tx.send(command).await.is_err() {
-            CB::callback(input);
+            callback();
         }
     }
 }
@@ -79,7 +70,7 @@ impl<C, O: OnSendError> From<mpsc::Sender<C>> for BackgroundServiceHandle<C, O> 
 mod tests {
     use tokio::sync::mpsc;
 
-use crate::utils::background_service_handle::{BackgroundServiceHandle, BackgroundServiceHandleError, CallBack, OnSendErrorCallback, OnSendErrorPanic, OnSendErrorResult};
+use crate::utils::background_service_handle::{BackgroundServiceHandle, BackgroundServiceHandleError, OnSendErrorCallback, OnSendErrorPanic, OnSendErrorResult};
 
     #[tokio::test]
     async fn test_clone_handle_success() {
@@ -130,25 +121,14 @@ use crate::utils::background_service_handle::{BackgroundServiceHandle, Backgroun
         handle.send(1).await;
     }
 
-    #[derive(Clone)]
-    struct TestCallBack {}
-
-    impl CallBack for TestCallBack {
-        type Input<'a> = &'a mut u32;
-
-        fn callback(input: Self::Input<'_>) {
-            *input += 1;
-        }
-    }
-
     #[tokio::test]
     async fn test_send_command_on_send_error_callback_success() {
         let (tx, _rx) = mpsc::channel::<u32>(10);
         let mut value = 0;
 
-        let mut handle = BackgroundServiceHandle::<u32, OnSendErrorCallback<TestCallBack>>::from(tx);
+        let mut handle = BackgroundServiceHandle::<u32, OnSendErrorCallback>::from(tx);
 
-        handle.send(1, &mut value).await;
+        handle.send(1, || value += 1).await;
         assert_eq!(value, 0);
     }
 
@@ -157,10 +137,10 @@ use crate::utils::background_service_handle::{BackgroundServiceHandle, Backgroun
         let (tx, rx) = mpsc::channel::<u32>(10);
         let mut value = 0;
 
-        let mut handle = BackgroundServiceHandle::<u32, OnSendErrorCallback<TestCallBack>>::from(tx);
+        let mut handle = BackgroundServiceHandle::<u32, OnSendErrorCallback>::from(tx);
         drop(rx);
 
-        handle.send(1, &mut value).await;
+        handle.send(1, || value += 1).await;
         assert_eq!(value, 1);
     }
 }
