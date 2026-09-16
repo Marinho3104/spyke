@@ -3,7 +3,7 @@ use std::{collections::HashMap, net::SocketAddr, time::Duration};
 use thiserror::Error;
 use tokio::{net::{TcpListener, TcpStream}, sync::mpsc};
 
-use crate::network::connection::{connection::{Connection, ConnectionConfig, ConnectionId}, connection_handle::{ConnectionHandle, ConnectionHandleCallBack, ConnectionHandleCallBackInput}, connection_manager_handle::{ConnectionManagerCommand, ConnectionManagerHandle}, server::{Server, ServerError}};
+use crate::network::connection::{connection::{Connection, ConnectionConfig, ConnectionId}, connection_handle::ConnectionHandle, connection_manager_handle::{ConnectionManagerCommand, ConnectionManagerHandle}, connection_manager_handle_external::{ConnectionManagerCommandExternal, ConnectionManagerHandleExternal}, server::{Server, ServerError}};
 use crate::diagnostics::logs::log_info;
 
 #[derive(Debug, Error)]
@@ -39,6 +39,7 @@ pub(crate) struct ConnectionManagerConfig {
     accept_connection_timeout_duration: Option<Duration>,
     max_queue_commands: usize,
     max_connection_queue_commands: usize,
+    connection_read_packet_timeout_duration: Option<Duration>
 }
 
 impl ConnectionManagerConfig {
@@ -47,13 +48,15 @@ impl ConnectionManagerConfig {
         max_connections: u16, 
         accept_connection_timeout_duration: Option<Duration>, 
         max_queue_commands: usize, 
-        max_connection_queue_commands: usize
+        max_connection_queue_commands: usize,
+        connection_read_packet_timeout_duration: Option<Duration>
     ) -> Self {
         Self {
             max_connections,
             accept_connection_timeout_duration,
             max_queue_commands,
-            max_connection_queue_commands
+            max_connection_queue_commands,
+            connection_read_packet_timeout_duration
         }
     }
 
@@ -73,6 +76,9 @@ impl ConnectionManagerConfig {
         self.max_connection_queue_commands
     }
 
+    pub(crate) fn connection_read_packet_timeout_duration(&self) -> Option<Duration> {
+        self.connection_read_packet_timeout_duration
+    }
 }
 
 pub(crate) struct ConnectionManager {
@@ -108,22 +114,27 @@ impl ConnectionManager {
         self.connections.remove(&connection_id);
     }
 
-    pub(crate) fn spawn(self) -> ConnectionManagerHandle {
+    pub(crate) fn spawn(self) -> (ConnectionManagerHandle, mpsc::Receiver<ConnectionManagerCommandExternal>) {
         let connection_manager_handle = self.connection_manager_handle.clone();
+        let (tx, external_communication_queue) = mpsc::channel::<ConnectionManagerCommandExternal>(self.config.max_queue_commands() as usize);
 
-        tokio::spawn(self.run());
+        tokio::spawn(self.run(ConnectionManagerHandleExternal::new(tx)));
 
-        connection_manager_handle
+        (connection_manager_handle, external_communication_queue)
     }
 
-    async fn run(mut self) {
+    fn connection_handle_send_error_callback(&mut self, connection_id: &ConnectionId) {
+        self.connections.remove(connection_id);
+    }
+
+    async fn run(mut self, mut connection_manager_handle_external: ConnectionManagerHandleExternal) {
         let accept_timeout_duration = self.config.accept_connection_timeout_duration();
         loop {
             let result = tokio::select! {
                 accepted_connection = self.server.as_mut().unwrap().accept_connection(accept_timeout_duration), 
                     if self.server.is_some() && self.connections.len() < self.config.max_connections() as usize => 
                         self.handle_accepted_connection(accepted_connection),
-                command = self.communication_queue.recv() => self.handle_command(command).await
+                command = self.communication_queue.recv() => self.handle_command(&mut connection_manager_handle_external, command).await
             };
 
             if let Err(_) = result {
@@ -138,7 +149,12 @@ impl ConnectionManager {
             
             Ok((stream, addr)) => {
                 let connection_id = self.new_connection_id();
-                let new_connection_config = ConnectionConfig::new(addr, connection_id, self.config.max_connection_queue_commands());
+                let new_connection_config = ConnectionConfig::new(
+                    addr, 
+                    connection_id, 
+                    self.config.max_connection_queue_commands(), 
+                    self.config.connection_read_packet_timeout_duration()
+                );
                 let new_connection = Connection::new(new_connection_config, stream, self.connection_manager_handle.clone());
                 let connection_handle = new_connection.spawn();
                 self.add_connection(connection_id, ConnectionEntry::new(connection_handle));
@@ -151,22 +167,23 @@ impl ConnectionManager {
         }
     }
 
-    async fn handle_command(&mut self, command: Option<ConnectionManagerCommand>) -> Result<(), ConnectionManagerError> {
+    async fn handle_command(
+        &mut self, 
+        connection_manager_handle_external: &mut ConnectionManagerHandleExternal, 
+        command: Option<ConnectionManagerCommand>
+    ) -> Result<(), ConnectionManagerError> {
         let command = command
             .ok_or(ConnectionManagerError::CommunicationQueueSender)?;
 
         match command {
-            ConnectionManagerCommand::Protocol { protocol, connection_id } => {},
+            ConnectionManagerCommand::Protocol { protocol, connection_id } => 
+                connection_manager_handle_external.protocol(protocol, connection_id).await,
             ConnectionManagerCommand::RemoveConnection { connection_id } => self.remove_connection(connection_id),
             ConnectionManagerCommand::SendPackets { connection_id, packets } => 
                 if let Some(connection_entry) = self.connections.get_mut(&connection_id) {
-                    connection_entry.handle().send_packets(
-                        packets, 
-                        ConnectionHandleCallBackInput {
-                            connections: &mut self.connections,
-
-                        }
-                    ).await;
+                    if let Err(..) = connection_entry.handle().send_packets(packets).await {
+                        self.connection_handle_send_error_callback(&connection_id)
+                    }
                 }
         }
 
@@ -175,10 +192,21 @@ impl ConnectionManager {
 }
 
 
+#[cfg(debug_assertions)]
+mod tests {
+    use crate::network::connection::connection_manager::{self, ConnectionManager, ConnectionManagerConfig};
+
+    async fn create_connection_manager() -> ConnectionManager {
+        let config = ConnectionManagerConfig::new(16, None, 16, 16, None);
+        ConnectionManager::new(config, None)
+    }
 
 
-
-
-
-
-
+    // #[tokio::test]
+    // async fn test_connection_manager_creation() {
+    //     let config = ConnectionManagerConfig::new(16, None, 16, 16);
+    //     let connection_manager = ConnectionManager::new(config, None)
+    //
+    // }
+ 
+}

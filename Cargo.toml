@@ -13,3 +13,4 @@ rand = "0.10.2"
 tokio-util = { version = "0.7.19", features = ["codec"] }
 futures-util = { version = "0.3.34", features = ["sink"] }
 borsh = { version = "1.8.1", features = ["derive"] }
+async-trait = "0.1.92"

@@ -15,6 +15,9 @@ pub(crate) enum ConnectionManagerCommand {
     SendPackets {
         connection_id: ConnectionId,
         packets: Vec<Packet>,
+    },
+    Authenticated {
+        connection_id: ConnectionId
     }
 }
 
@@ -29,6 +32,16 @@ impl BackgroundServiceHandle<ConnectionManagerCommand, OnSendErrorPanic> {
 
     pub(crate) async fn remove_connection(&mut self, connection_id: ConnectionId) {
         let command = ConnectionManagerCommand::RemoveConnection { connection_id };
+        self.send(command).await;
+    }
+
+    pub(crate) async fn send_packets(&mut self, connection_id: ConnectionId, packets: Vec<Packet>) {
+        let command = ConnectionManagerCommand::SendPackets { connection_id, packets };
+        self.send(command).await;
+    }
+
+    pub(crate) async fn authenticated(&mut self, connection_id: ConnectionId) {
+        let command = ConnectionManagerCommand::Authenticated { connection_id };
         self.send(command).await;
     }
 
