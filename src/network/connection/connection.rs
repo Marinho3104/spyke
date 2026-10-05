@@ -1,10 +1,11 @@
-use std::{net::SocketAddr, sync::mpsc};
+use std::{net::SocketAddr};
 
-use tokio::net::TcpStream;
+use futures_util::StreamExt;
+use thiserror::Error;
+use tokio::{net::TcpStream, sync::mpsc};
 use tokio_util::codec::Framed;
 
-use crate::network::{connection::connection_handle::ConnectionHandle, framing::{codec::Codec, protocol_reassembler::ProtocolReassembler}};
-
+use crate::network::{connection::connection_handle::{ConnectionCommand, ConnectionHandle}, framing::{codec::Codec, protocol_reassembler::{Config as ProtocolReassemblerConfig, ProtocolReassembler}}};
 
 #[derive(Debug)]
 pub(crate) struct ConnectionId(u64);
@@ -18,9 +19,15 @@ pub(crate) struct Config {
 pub(crate) struct Connection {
     config: Config,
     stream: Framed<TcpStream, Codec>,
-    protocol_reassembler: ProtocolReassembler
+    protocol_reassembler: ProtocolReassembler,
+    rx: mpsc::Receiver<ConnectionCommand>,
 }
 
+#[derive(Debug, Error)]
+pub(crate) enum ConnectionError {
+    #[error("TcpStream error: {0}")]
+    TcpStreamError(#[from] std::io::Error),
+} 
 
 impl ConnectionId {
     pub(crate) fn new(connection_id: u64) -> Self {
@@ -37,12 +44,34 @@ impl Config {
 }
 
 impl Connection {
-    pub(crate) fn new(stream: TcpStream, config: Config, connection_handle_size: usize) -> (Self, ConnectionHandle) {
+    pub(crate) fn new(stream: TcpStream, config: Config, connection_handle_size: usize, protocol_reassembler_config: ProtocolReassemblerConfig) -> (Self, ConnectionHandle) {
+        let (handle, rx) = ConnectionHandle::new(connection_handle_size);
         (
             Self {
                 config,
-                stream: Framed::new(stream, Codec::new())
+                stream: Framed::new(stream, Codec::new()),
+                protocol_reassembler: ProtocolReassembler::new(protocol_reassembler_config),
+                rx
             },
+            handle
         )
+    }
+
+    pub(crate) async fn from_addr(
+        addr: SocketAddr, 
+        config: Config,
+        connection_handle_size: usize, 
+        protocol_reassembler_config: ProtocolReassemblerConfig
+    ) -> Result<(Self, ConnectionHandle), ConnectionError> {
+        Ok(Self::new(TcpStream::connect(addr).await?, config, connection_handle_size, protocol_reassembler_config))
+    }
+
+    pub(crate) async fn run(mut self) {
+        loop {
+            tokio::select! {
+                frame = self.stream.next() => {},
+                command = self.rx.recv() => {}
+            }
+        }
     }
 }

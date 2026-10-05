@@ -12,13 +12,13 @@ struct ReassembledData {
 }
 
 #[derive(Debug)]
-pub(crate) struct ProtocolReassemblerConfig {
+pub(crate) struct Config {
     max_concurrent_reassemblies: u16,
 }
 
 #[derive(Debug)]
 pub(crate) struct ProtocolReassembler {
-    config: ProtocolReassemblerConfig,
+    config: Config,
     data: HashMap<MessageId, ReassembledData>   
 }
 
@@ -86,7 +86,7 @@ impl ReassembledData {
     }
 }
 
-impl ProtocolReassemblerConfig {
+impl Config {
     pub(crate) fn new(max_concurrent_reassemblies: u16) -> Self {
         Self {
             max_concurrent_reassemblies
@@ -95,7 +95,7 @@ impl ProtocolReassemblerConfig {
 }
 
 impl ProtocolReassembler {
-    pub(crate) fn new(config: ProtocolReassemblerConfig) -> Self {
+    pub(crate) fn new(config: Config) -> Self {
         Self {
             config,
             data: HashMap::new(),
@@ -142,8 +142,8 @@ mod tests {
 
 use super::*;
 
-    fn config() -> ProtocolReassemblerConfig {
-        ProtocolReassemblerConfig::new(16)
+    fn config() -> Config {
+        Config::new(16)
     }
 
     fn protocol_reassembler() -> ProtocolReassembler {
