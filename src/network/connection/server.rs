@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, time::Duration};
 
 use thiserror::Error;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 
 
 #[derive(Debug)]
@@ -18,7 +18,6 @@ pub(crate) enum ServerError {
 
 
 impl Server {
-    
     pub(crate) fn new(stream: TcpListener, addr: SocketAddr) -> Self {
         Self {
             stream,
@@ -30,8 +29,13 @@ impl Server {
         Ok(Self::new(TcpListener::bind(addr).await?, addr))
     }
 
-    pub(crate) async fn accept_connection(&mut self, timeout: Option<Duration>) -> () {
-        todo!()
+    pub(crate) async fn accept_connection(&mut self) -> Result<(TcpStream, SocketAddr), ServerError> {
+        Ok(self.stream.accept().await?)
+    }
+
+    pub(crate) fn is_fatal_error(error: ServerError) -> bool {
+        let ServerError::TcpListener(error) = error;
+        error.kind() != std::io::ErrorKind::ConnectionAborted && error.kind() != std::io::ErrorKind::Interrupted
     }
     
 }

@@ -1,7 +1,7 @@
 use thiserror::Error;
 use tokio_util::{bytes::BytesMut, codec::{Decoder, Encoder, LengthDelimitedCodec, LengthDelimitedCodecError}};
 
-use crate::network::framing::frame::Frame;
+use crate::network::{framing::frame::Frame, protocol::dispatcher::{Dispatcher, DispatcherTryFromPayloadsError}};
 
 
 #[derive(Debug)]
@@ -90,34 +90,37 @@ impl Encoder<Vec<Frame>> for Codec {
     }
 }
 
+impl Encoder<Dispatcher> for Codec {
+    type Error = EncoderError;
+
+    fn encode(&mut self, item: Dispatcher, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let frames: Vec<Frame> = item.into();
+        self.encode(frames, dst)
+    }
+}
+
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tokio_util::bytes::BytesMut;
-    use crate::network::framing::{frame::{Frame, Payload}, frame_headers::{FragmentInfo, FrameHeaders, MessageId, RawProtocolId}};
-
-
-    fn frame(protocol_id: RawProtocolId) -> Frame {
-        let frame_headers = FrameHeaders::new(protocol_id, Some(FragmentInfo::try_new(MessageId::new(0), 0, 1).unwrap()));
-        Frame::new(frame_headers, Payload::try_new(vec![0; Payload::MAX_SIZE]).unwrap())
-    }
+    use crate::network::{framing::{frame::{Frame, Payload}, frame_headers::{FragmentInfo, FrameHeaders, MessageId, RawProtocolId}}, protocol::{disconnect::Disconnect, protocol_id::ProtocolId, spec::Spec}};
 
     #[test]
     fn encode_decode() {
-        let frames = vec![frame(RawProtocolId::new(0)), frame(RawProtocolId::new(1))];
-        let frame1 = frames.first().unwrap().clone();
-        let frame2 = frames.get(1).unwrap().clone();
+        let dispatcher = Dispatcher::Disconnect(Disconnect);
 
         let mut codec = Codec::new();
         let mut buffer = BytesMut::new();
 
-        codec.encode(frames, &mut buffer).unwrap();
+        codec.encode(dispatcher, &mut buffer).unwrap();
 
-        let decoded_frame1 = codec.decode(&mut buffer).unwrap().unwrap();
-        let decoded_frame2 = codec.decode(&mut buffer).unwrap().unwrap();
+        let decoded_frame = codec.decode(&mut buffer).unwrap().unwrap();
+        let raw_protocol_id = decoded_frame.headers.raw_protocol_id;
+        let protocol_id: ProtocolId = raw_protocol_id.try_into().unwrap();
 
-        assert_eq!(decoded_frame1, frame1);
-        assert_eq!(decoded_frame2, frame2);
+        assert_eq!(protocol_id, Disconnect::PROTOCOL_ID);
+        assert!(decoded_frame.payload.0.len() == 0)
     }
 }

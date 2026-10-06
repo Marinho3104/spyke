@@ -3,6 +3,7 @@ use thiserror::Error;
 use crate::network::{framing::frame::{Frame, Payload}, protocol::{disconnect::{Disconnect, DisconnectTryFromError}, protocol_id::{ProtocolId, ProtocolIdTryFromError}}};
 
 
+#[derive(Debug)]
 pub(crate) enum Dispatcher {
     Disconnect(Disconnect),
 }
