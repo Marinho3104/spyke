@@ -9,10 +9,10 @@ pub(crate) enum BackgroundServiceHandleError<C> {
     SendError(#[from] mpsc::error::SendError<C>),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct OnSendErrorPanic {}
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct OnSendErrorResult {}
 
 pub(crate) trait OnSendError {}
