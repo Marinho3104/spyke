@@ -4,3 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+tracing = { version = "0.1.44", features = ["release_max_level_warn"] }
+tracing-subscriber = "0.3.23"
