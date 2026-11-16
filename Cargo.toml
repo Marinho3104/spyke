@@ -13,3 +13,5 @@ tokio-util = { version = "0.7.19", features = ["codec"] }
 futures-util = { version = "0.3.34", features = ["sink"] }
 borsh = { version = "1.8.1", features = ["derive"] }
 async-trait = "0.1.92"
+tracing = { version = "0.1.44", features = ["release_max_level_warn"] }
+tracing-subscriber = "0.3.23"
