@@ -1,50 +1,45 @@
-use thiserror::Error;
+use borsh::{BorshDeserialize, BorshSerialize};
 
-use crate::network::{framing::{frame::{Frame, Payload}, frame_headers::FrameHeaders}, protocol::{protocol_id::{ProtocolId, ProtocolIdTryFromError}, spec::Spec}};
+use crate::network::protocol::{
+    flow::Flow,
+    specs::{ContentSpec, Spec, StateSpec, StateSpecError},
+};
+
+#[derive(Debug, BorshDeserialize, BorshSerialize)]
+pub(crate) struct Content;
+
+#[derive(Debug, BorshDeserialize, BorshSerialize)]
+pub(crate) struct Disconnect {
+    pub(crate) content: Content,
+}
 
 #[derive(Debug)]
-pub(crate) struct Disconnect;
+pub(crate) enum State {}
 
-#[derive(Debug, Error)]
-pub(crate) enum DisconnectTryFromError {
-    #[error("Protocol id try from error: {0}")]
-    ProtocolIdTryFrom(#[from] ProtocolIdTryFromError),
-
-    #[error("Unexpected protocol id: {0}")]
-    ProtocolId(u8),
-    
-    #[error("Unexpected payload lenght: {0}")]
-    PayloadLength(usize),
-    
-    #[error("Unexpected number of frames received: {0}")]
-    FramesCount(usize),
-}
-
+impl ContentSpec for Content {}
 
 impl Spec for Disconnect {
-    const PROTOCOL_ID: ProtocolId = ProtocolId::Disconnect;
+    type Content = Content;
+
+    fn content(&self) -> &Self::Content {
+        &self.content
+    }
 }
 
-impl TryFrom<Vec<Payload>> for Disconnect {
-    type Error = DisconnectTryFromError;
+impl Disconnect {
+    pub(crate) fn new() -> Self {
+        Self { content: Content }
+    }
+}
 
-    fn try_from(value: Vec<Payload>) -> Result<Self, Self::Error> {
-        match value.as_slice() {
-            [frame] => match frame.0.len() {
-                0 => Ok(Disconnect),
-                unexpected => Err(DisconnectTryFromError::FramesCount(unexpected))
-            },
-            slice => Err(DisconnectTryFromError::FramesCount(slice.len()))
-        }
+impl StateSpec for State {
+    type Protocol = Disconnect;
+
+    fn try_new(_: &Self::Protocol, _: Flow) -> Result<Option<Self>, StateSpecError> {
+        Ok(None)
     }
 
-}
-
-impl From<Disconnect> for Vec<Frame> {
-    fn from(_: Disconnect) -> Self {
-        let headers = FrameHeaders::new(Disconnect::PROTOCOL_ID.into(), None);
-
-        // Unwrap here is safe as all the values used are hardcoded
-        vec![Frame::new(headers, Payload::try_new(vec![0; 0]).unwrap())]
+    fn update(&self, _: &Self::Protocol, _: Flow) -> Result<Option<Self>, StateSpecError> {
+        match *self {}
     }
 }

@@ -22,7 +22,7 @@ impl OnSendError for OnSendErrorResult {}
 #[derive(Debug, Clone)]
 pub(crate) struct BackgroundServiceHandle<C, O: OnSendError> {
     tx: mpsc::Sender<C>,
-    on_error: PhantomData<O>
+    on_error: PhantomData<O>,
 }
 
 impl<C, O: OnSendError> BackgroundServiceHandle<C, O> {
@@ -31,16 +31,18 @@ impl<C, O: OnSendError> BackgroundServiceHandle<C, O> {
         (
             Self {
                 tx,
-                on_error: PhantomData
+                on_error: PhantomData,
             },
-            rx
+            rx,
         )
     }
 }
 
-impl<C> BackgroundServiceHandle<C, OnSendErrorPanic> {   
+impl<C> BackgroundServiceHandle<C, OnSendErrorPanic> {
     pub(crate) async fn send(&mut self, command: C) {
-        self.tx.send(command).await
+        self.tx
+            .send(command)
+            .await
             .expect("This send should not return error, never!");
     }
 }
@@ -56,7 +58,7 @@ impl<C, O: OnSendError> From<mpsc::Sender<C>> for BackgroundServiceHandle<C, O> 
     fn from(value: mpsc::Sender<C>) -> Self {
         Self {
             tx: value,
-            on_error: PhantomData
+            on_error: PhantomData,
         }
     }
 }

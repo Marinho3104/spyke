@@ -1,41 +1,26 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use thiserror::Error;
-use crate::network::protocol::protocol_id::ProtocolId;
-
-
-#[derive(Debug, Clone, Copy, PartialEq, BorshSerialize, BorshDeserialize)]
-pub(crate) struct RawProtocolId(pub(crate) u8);
 
 #[derive(Debug, Clone, Copy, PartialEq, BorshSerialize, BorshDeserialize, Eq, Hash)]
 pub(crate) struct MessageId(pub(crate) u16);
 
-#[derive(Debug, Clone, PartialEq, BorshSerialize, BorshDeserialize)]
+#[derive(Debug, Clone, PartialEq, BorshSerialize)]
 pub(crate) struct FragmentInfo {
-    pub(crate) message_id: MessageId,
-    pub(crate) index: u16,
-    pub(crate) total: u16, 
+    message_id: MessageId,
+    index: u16,
+    total: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, BorshSerialize, BorshDeserialize)]
-pub(crate) struct FrameHeaders {
-    pub(crate) raw_protocol_id: RawProtocolId,
-    pub(crate) fragment_info: Option<FragmentInfo>,
-}
+pub(crate) struct FrameHeaders(pub(crate) Option<FragmentInfo>);
 
 #[derive(Debug, Error)]
 pub(crate) enum FragmentInfoError {
     #[error("Fragment sequence index must be less than sequence total: {index} >= {total}")]
-    InvalidSequence {
-        index: u16,
-        total: u16
-    },
-}
+    InvalidSequence { index: u16, total: u16 },
 
-
-impl RawProtocolId {
-    pub(crate) fn new(protocol_id: u8) -> Self {
-        Self(protocol_id)
-    }
+    #[error("Fragment total must be greater than 1: {0} <= 1")]
+    InvalidTotal(u16),
 }
 
 impl MessageId {
@@ -44,42 +29,69 @@ impl MessageId {
     }
 }
 
-impl From<ProtocolId> for RawProtocolId {
-    fn from(value: ProtocolId) -> Self {
-        Self::new(value as u8)
-    }
-}
-
 impl FragmentInfo {
-        pub(crate) fn try_new(message_id: MessageId, index: u16, total: u16) -> Result<Self, FragmentInfoError> {
+    pub(crate) fn try_new(
+        message_id: MessageId,
+        index: u16,
+        total: u16,
+    ) -> Result<Self, FragmentInfoError> {
+        let slf = Self {
+            message_id,
+            index,
+            total,
+        };
+        slf.validate()?;
+        Ok(slf)
+    }
+
+    pub(crate) fn message_id(&self) -> MessageId {
+        self.message_id
+    }
+
+    pub(crate) fn index(&self) -> u16 {
+        self.index
+    }
+
+    pub(crate) fn total(&self) -> u16 {
+        self.total
+    }
+
+    fn validate(&self) -> Result<(), FragmentInfoError> {
+        let index = self.index;
+        let total = self.total;
         if index >= total {
             Err(FragmentInfoError::InvalidSequence { index, total })?
         }
+        if total <= 1 {
+            Err(FragmentInfoError::InvalidTotal(total))?
+        }
+        Ok(())
+    }
+}
 
-        Ok(
-            Self {
-                message_id,
-                index,
-                total
-            }
+impl BorshDeserialize for FragmentInfo {
+    fn deserialize_reader<R: std::io::prelude::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let fragment_info = FragmentInfo::try_new(
+            MessageId::deserialize_reader(reader)?,
+            u16::deserialize_reader(reader)?,
+            u16::deserialize_reader(reader)?,
         )
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string()))?;
+
+        Ok(fragment_info)
     }
 }
 
 impl FrameHeaders {
-    pub(crate) const MAX_ENCODED_SIZE: usize = 
-        size_of::<RawProtocolId>() +
-        1 + // Additional byte added from the option type
-        size_of::<FragmentInfo>();
+    pub(crate) const MAX_ENCODED_SIZE: usize = 1 + // Additional byte added from the option type
+        size_of::<u16>() + // message_id
+        size_of::<u16>() + // index
+        size_of::<u16>(); // total
 
-    pub(crate) fn new(raw_protocol_id: RawProtocolId, fragment_info: Option<FragmentInfo>) -> Self {
-        Self {
-            raw_protocol_id,
-            fragment_info
-        }
+    pub(crate) fn new(fragment_info: Option<FragmentInfo>) -> Self {
+        Self(fragment_info)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -87,13 +99,15 @@ mod tests {
 
     #[test]
     fn validate_encoded_size() {
-        let headers = FrameHeaders::new(RawProtocolId::new(0), Some(FragmentInfo::try_new(MessageId::new(0), 0, 1).unwrap()));
+        let headers = FrameHeaders::new(Some(
+            FragmentInfo::try_new(MessageId::new(0), 0, 2).unwrap(),
+        ));
         let encoded_headers = borsh::to_vec(&headers).unwrap();
         assert_eq!(encoded_headers.len(), FrameHeaders::MAX_ENCODED_SIZE);
 
-        let headers = FrameHeaders::new(RawProtocolId::new(0), None);
+        let headers = FrameHeaders::new(None);
         let encoded_headers = borsh::to_vec(&headers).unwrap();
-        assert_eq!(encoded_headers.len(), 2);
+        assert_eq!(encoded_headers.len(), 1);
     }
 
     #[test]
@@ -101,5 +115,4 @@ mod tests {
         let fragment_info = FragmentInfo::try_new(MessageId::new(0), 1, 1);
         assert!(fragment_info.is_err());
     }
-
 }

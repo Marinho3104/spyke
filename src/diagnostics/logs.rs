@@ -1,4 +1,3 @@
-
 macro_rules! log_info {
     ($($arg:tt)*) => {
 	#[cfg(debug_assertions)]

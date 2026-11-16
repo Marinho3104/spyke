@@ -1,5 +1,5 @@
-mod utils;
-mod network;
 mod diagnostics;
+mod network;
+mod utils;
 
 fn main() {}

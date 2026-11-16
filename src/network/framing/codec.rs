@@ -1,14 +1,19 @@
 use thiserror::Error;
-use tokio_util::{bytes::BytesMut, codec::{Decoder, Encoder, LengthDelimitedCodec, LengthDelimitedCodecError}};
+use tokio_util::{
+    bytes::BytesMut,
+    codec::{Decoder, Encoder, LengthDelimitedCodec},
+};
 
-use crate::network::{framing::frame::Frame, protocol::dispatcher::{Dispatcher, DispatcherTryFromPayloadsError}};
-
+use crate::network::{
+    framing::{frame::Frame, frame_headers::MessageId},
+    protocol::dispatcher::Dispatcher,
+};
 
 #[derive(Debug)]
 pub(crate) struct Codec {
     inner: LengthDelimitedCodec,
+    next_message_id: u16,
 }
-
 
 #[derive(Debug, Error)]
 pub(crate) enum DecoderError {
@@ -16,10 +21,10 @@ pub(crate) enum DecoderError {
     Io(#[from] std::io::Error),
 
     #[error("LengthDelimitedCodec error: {0}")]
-    LengthDelimitedCodecError(#[from] LengthDelimitedCodecError),
+    LengthDelimitedCodecError(std::io::Error),
 
     #[error("Deserialization failed with error: {0}")]
-    Deserialize(String),
+    Deserialize(std::io::Error),
 }
 
 #[derive(Debug, Error)]
@@ -28,12 +33,11 @@ pub(crate) enum EncoderError {
     Io(#[from] std::io::Error),
 
     #[error("LengthDelimitedCodec error: {0}")]
-    LengthDelimitedCodecError(#[from] LengthDelimitedCodecError),
+    LengthDelimitedCodecError(std::io::Error),
 
     #[error("Serialization failed with error: {0}")]
-    Serialize(String),
+    Serialize(std::io::Error),
 }
-
 
 impl Codec {
     pub(crate) fn new() -> Self {
@@ -42,6 +46,7 @@ impl Codec {
                 .length_field_type::<u32>()
                 .max_frame_length(Frame::MAX_ENCODED_SIZE)
                 .new_codec(),
+            next_message_id: 0,
         }
     }
 }
@@ -51,14 +56,16 @@ impl Decoder for Codec {
     type Error = DecoderError;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Frame>, Self::Error> {
-        let decoded_frame = self.inner.decode(src)?;
-    
+        let decoded_frame = self
+            .inner
+            .decode(src)
+            .map_err(DecoderError::LengthDelimitedCodecError)?;
+
         let result: Option<Frame> = match decoded_frame {
             Some(decoded_frame) => Some(
-                borsh::from_slice(&decoded_frame)
-                    .map_err(|err| DecoderError::Deserialize(err.to_string()))?
-                ),
-            None => None
+                borsh::from_slice::<Frame>(&decoded_frame).map_err(DecoderError::Deserialize)?,
+            ),
+            None => None,
         };
 
         Ok(result)
@@ -69,10 +76,11 @@ impl Encoder<Frame> for Codec {
     type Error = EncoderError;
 
     fn encode(&mut self, item: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let encoded_frame = borsh::to_vec(&item)
-            .map_err(|err| EncoderError::Serialize(err.to_string()))?;
+        let encoded_frame = borsh::to_vec(&item).map_err(EncoderError::Serialize)?;
 
-        self.inner.encode(encoded_frame.into(), dst)?;
+        self.inner
+            .encode(encoded_frame.into(), dst)
+            .map_err(EncoderError::LengthDelimitedCodecError)?;
 
         Ok(())
     }
@@ -94,33 +102,83 @@ impl Encoder<Dispatcher> for Codec {
     type Error = EncoderError;
 
     fn encode(&mut self, item: Dispatcher, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let frames: Vec<Frame> = item.into();
+        let encoded_dispatcher = borsh::to_vec(&item).map_err(EncoderError::Serialize)?;
+
+        // Sequential ids per connection, so a message id is only reused after wrapping around
+        let message_id = MessageId::new(self.next_message_id);
+        self.next_message_id = self.next_message_id.wrapping_add(1);
+
+        let frames = Frame::split_into_frames(encoded_dispatcher, message_id);
         self.encode(frames, dst)
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::network::protocol::{
+        conversation_id::ConversationId, disconnect::Disconnect, dispatcher::Headers,
+    };
     use tokio_util::bytes::BytesMut;
-    use crate::network::{framing::{frame::{Frame, Payload}, frame_headers::{FragmentInfo, FrameHeaders, MessageId, RawProtocolId}}, protocol::{disconnect::Disconnect, protocol_id::ProtocolId, spec::Spec}};
 
     #[test]
     fn encode_decode() {
-        let dispatcher = Dispatcher::Disconnect(Disconnect);
+        let dispatcher = Dispatcher::Disconnect {
+            protocol: Disconnect::new(),
+            headers: Headers::new(ConversationId::new(0)),
+        };
 
         let mut codec = Codec::new();
         let mut buffer = BytesMut::new();
 
         codec.encode(dispatcher, &mut buffer).unwrap();
 
-        let decoded_frame = codec.decode(&mut buffer).unwrap().unwrap();
-        let raw_protocol_id = decoded_frame.headers.raw_protocol_id;
-        let protocol_id: ProtocolId = raw_protocol_id.try_into().unwrap();
+        codec.decode(&mut buffer).unwrap().unwrap();
+    }
 
-        assert_eq!(protocol_id, Disconnect::PROTOCOL_ID);
-        assert!(decoded_frame.payload.0.len() == 0)
+    #[test]
+    fn decode_errors() {
+        // Length prefix bigger than the max frame size
+        let mut buffer = BytesMut::from(&[0xFF, 0xFF, 0xFF, 0xFF][..]);
+        assert!(matches!(
+            Codec::new().decode(&mut buffer),
+            Err(DecoderError::LengthDelimitedCodecError(_))
+        ));
+
+        // Valid length, but the bytes are not a Frame (invalid Option tag)
+        let mut buffer = BytesMut::from(&[0, 0, 0, 1, 0xFF][..]);
+        assert!(matches!(
+            Codec::new().decode(&mut buffer),
+            Err(DecoderError::Deserialize(_))
+        ));
+    }
+
+    #[test]
+    fn invalid_fragment_info() {
+        // (index, total, valid): the valid pair proves the raw layout below matches a Frame
+        let fragments: [(u16, u16, bool); 6] = [
+            (0, 2, true),
+            (0, 0, false),
+            (0, 1, false),
+            (1, 1, false),
+            (2, 1, false),
+            (2, 2, false),
+        ];
+
+        for (index, total, valid) in fragments {
+            // Raw Frame bytes, as a peer could send them: Some tag, message_id, index, total, payload
+            let frame_bytes = borsh::to_vec(&(1u8, 0u16, index, total, vec![0u8; 10])).unwrap();
+
+            let mut codec = Codec::new();
+            let mut buffer = BytesMut::new();
+            codec.inner.encode(frame_bytes.into(), &mut buffer).unwrap();
+
+            let result = codec.decode(&mut buffer);
+            if valid {
+                assert!(result.unwrap().is_some());
+            } else {
+                assert!(matches!(result, Err(DecoderError::Deserialize(_))));
+            }
+        }
     }
 }
