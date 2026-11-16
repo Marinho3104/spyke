@@ -14,7 +14,7 @@ pub(crate) type ConnectionHandle = BackgroundServiceHandle<ConnectionCommand, On
 
 impl BackgroundServiceHandle<ConnectionCommand, OnSendErrorResult> {
     pub(crate) async fn protocol(
-        &mut self,
+        &self,
         dispatcher: Dispatcher,
     ) -> Result<(), BackgroundServiceHandleError<ConnectionCommand>> {
         let command = ConnectionCommand::Protocol(dispatcher);
@@ -36,7 +36,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_commands() {
-        let (mut handle, mut rx) = get_handle_and_rx();
+        let (handle, mut rx) = get_handle_and_rx();
 
         assert!(
             handle

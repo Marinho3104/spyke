@@ -292,7 +292,7 @@ mod tests {
     #[tokio::test]
     async fn handle_protocol_command() {
         let listener = launch_server().await;
-        let (connection_manager_rx, mut handle, connection_task) =
+        let (connection_manager_rx, handle, connection_task) =
             launch_connection_run(listener.local_addr().unwrap().port()).await;
 
         let server_task = tokio::spawn(async move {
