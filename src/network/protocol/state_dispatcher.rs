@@ -13,7 +13,7 @@ pub(crate) enum StateDispatcher {
     Ping(PingState),
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq)]
 pub(crate) enum StateDispatcherError {
     #[error("State spec error: {0}")]
     StateSpec(#[from] StateSpecError),

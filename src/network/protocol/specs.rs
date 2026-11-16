@@ -20,7 +20,7 @@ pub(crate) trait Spec: BorshSerialize + BorshDeserialize {
     fn content(&self) -> &Self::Content;
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq)]
 pub(crate) enum StateSpecError {
     #[error("Invalid state")]
     InvalidState,

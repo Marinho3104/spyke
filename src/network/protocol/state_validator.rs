@@ -22,7 +22,7 @@ pub(crate) struct StateValidator {
     states: HashMap<ConversationId, StateDispatcher>,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq)]
 pub(crate) enum StateValidatorError {
     #[error("State dispatcher error: {0}")]
     StateDispatcher(#[from] StateDispatcherError),
@@ -103,6 +103,7 @@ mod tests {
         dispatcher::Headers,
         flow::Flow::{Inbound, Outbound},
         ping::{Content as PingContent, Ping},
+        specs::StateSpecError,
     };
 
     // This side uses even ids, so the peer uses odd ones
@@ -133,6 +134,10 @@ mod tests {
             protocol: Ping::new(PingContent::Pong),
             headers: headers(conversation_id),
         }
+    }
+
+    fn spec_error(error: StateSpecError) -> StateValidatorError {
+        StateValidatorError::StateDispatcher(StateDispatcherError::StateSpec(error))
     }
 
     fn disconnect(conversation_id: u16) -> Dispatcher {
@@ -167,43 +172,71 @@ mod tests {
 
     #[test]
     fn wrong_flows() {
-        // Every step must succeed except the last one
-        let flows = vec![
+        // Each group is (expected error, flows); every step must succeed except the last one
+        let groups = vec![
             // Conversation started with an id from the other side's range
-            vec![(ping(LOCAL_ID), Inbound)],
-            vec![(ping(REMOTE_ID), Outbound)],
-            vec![(disconnect(LOCAL_ID), Inbound)],
-            vec![(disconnect(REMOTE_ID), Outbound)],
+            (
+                StateValidatorError::InvalidConversationId,
+                vec![
+                    vec![(ping(LOCAL_ID), Inbound)],
+                    vec![(ping(REMOTE_ID), Outbound)],
+                    vec![(disconnect(LOCAL_ID), Inbound)],
+                    vec![(disconnect(REMOTE_ID), Outbound)],
+                ],
+            ),
             // Pong without a ping
-            vec![(pong(REMOTE_ID), Inbound)],
-            vec![(pong(LOCAL_ID), Outbound)],
+            (
+                spec_error(StateSpecError::InvalidState),
+                vec![
+                    vec![(pong(REMOTE_ID), Inbound)],
+                    vec![(pong(LOCAL_ID), Outbound)],
+                ],
+            ),
             // Pong in the same direction as the ping
-            vec![(ping(REMOTE_ID), Inbound), (pong(REMOTE_ID), Inbound)],
-            vec![(ping(LOCAL_ID), Outbound), (pong(LOCAL_ID), Outbound)],
+            (
+                spec_error(StateSpecError::InvalidFlow),
+                vec![
+                    vec![(ping(REMOTE_ID), Inbound), (pong(REMOTE_ID), Inbound)],
+                    vec![(ping(LOCAL_ID), Outbound), (pong(LOCAL_ID), Outbound)],
+                ],
+            ),
             // Second ping on an open conversation
-            vec![(ping(REMOTE_ID), Inbound), (ping(REMOTE_ID), Inbound)],
-            vec![(ping(REMOTE_ID), Inbound), (ping(REMOTE_ID), Outbound)],
-            vec![(ping(LOCAL_ID), Outbound), (ping(LOCAL_ID), Inbound)],
-            vec![(ping(LOCAL_ID), Outbound), (ping(LOCAL_ID), Outbound)],
+            (
+                spec_error(StateSpecError::InvalidState),
+                vec![
+                    vec![(ping(REMOTE_ID), Inbound), (ping(REMOTE_ID), Inbound)],
+                    vec![(ping(REMOTE_ID), Inbound), (ping(REMOTE_ID), Outbound)],
+                    vec![(ping(LOCAL_ID), Outbound), (ping(LOCAL_ID), Inbound)],
+                    vec![(ping(LOCAL_ID), Outbound), (ping(LOCAL_ID), Outbound)],
+                ],
+            ),
             // Other protocol on an open conversation
-            vec![(ping(REMOTE_ID), Inbound), (disconnect(REMOTE_ID), Inbound)],
-            vec![
-                (ping(REMOTE_ID), Inbound),
-                (disconnect(REMOTE_ID), Outbound),
-            ],
-            vec![(ping(LOCAL_ID), Outbound), (disconnect(LOCAL_ID), Inbound)],
-            vec![(ping(LOCAL_ID), Outbound), (disconnect(LOCAL_ID), Outbound)],
+            (
+                StateValidatorError::StateDispatcher(StateDispatcherError::UnexpectedProtocol),
+                vec![
+                    vec![(ping(REMOTE_ID), Inbound), (disconnect(REMOTE_ID), Inbound)],
+                    vec![
+                        (ping(REMOTE_ID), Inbound),
+                        (disconnect(REMOTE_ID), Outbound),
+                    ],
+                    vec![(ping(LOCAL_ID), Outbound), (disconnect(LOCAL_ID), Inbound)],
+                    vec![(ping(LOCAL_ID), Outbound), (disconnect(LOCAL_ID), Outbound)],
+                ],
+            ),
         ];
 
-        for mut flow in flows {
-            let mut validator = state_validator();
-            let (last_dispatcher, last_direction) = flow.pop().unwrap();
+        for (expected_error, flows) in groups {
+            for mut flow in flows {
+                let mut validator = state_validator();
+                let (last_dispatcher, last_direction) = flow.pop().unwrap();
 
-            for (dispatcher, direction) in flow {
-                assert!(validator.update(&dispatcher, direction).is_ok());
+                for (dispatcher, direction) in flow {
+                    assert!(validator.update(&dispatcher, direction).is_ok());
+                }
+
+                let result = validator.update(&last_dispatcher, last_direction);
+                assert_eq!(result.as_ref().err(), Some(&expected_error));
             }
-
-            assert!(validator.update(&last_dispatcher, last_direction).is_err());
         }
     }
 
