@@ -20,10 +20,6 @@ impl ContentSpec for Content {}
 
 impl Spec for Disconnect {
     type Content = Content;
-
-    fn content(&self) -> &Self::Content {
-        &self.content
-    }
 }
 
 impl Disconnect {

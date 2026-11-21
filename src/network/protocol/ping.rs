@@ -25,10 +25,6 @@ impl ContentSpec for Content {}
 
 impl Spec for Ping {
     type Content = Content;
-
-    fn content(&self) -> &Self::Content {
-        &self.content
-    }
 }
 
 impl Ping {

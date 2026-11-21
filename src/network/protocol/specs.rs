@@ -9,15 +9,11 @@ pub(crate) trait StateSpec: Sized {
 
     fn try_new(protocol: &Self::Protocol, flow: Flow) -> Result<Option<Self>, StateSpecError>;
 
-    fn update(&self, protocol: &Self::Protocol, flow: Flow)
-    -> Result<Option<Self>, StateSpecError>;
+    fn update(&self, protocol: &Self::Protocol, flow: Flow) -> Result<Option<Self>, StateSpecError>;
 }
 
 pub(crate) trait Spec: BorshSerialize + BorshDeserialize {
-    /// The data carried at each step of the protocol
     type Content: ContentSpec;
-
-    fn content(&self) -> &Self::Content;
 }
 
 #[derive(Debug, Error, PartialEq)]
