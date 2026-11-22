@@ -19,10 +19,10 @@ impl<C> fmt::Debug for BackgroundServiceHandleError<C> {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct OnSendErrorPanic {}
+pub(crate) struct OnSendErrorPanic;
 
 #[derive(Debug, Clone)]
-pub(crate) struct OnSendErrorResult {}
+pub(crate) struct OnSendErrorResult;
 
 pub(crate) trait OnSendError {}
 impl OnSendError for OnSendErrorPanic {}
@@ -101,12 +101,15 @@ mod tests {
         let handle = BackgroundServiceHandle::<u32, OnSendErrorResult>::from(tx);
 
         let result = handle.send(1).await;
-        assert!(result.is_ok());
+        result.unwrap();
 
         drop(rx);
 
         let result = handle.send(1).await;
-        assert!(result.is_err())
+        assert!(matches!(
+            result,
+            Err(BackgroundServiceHandleError::SendError(_))
+        ));
     }
 
     // Neither Clone nor Debug, like a request carrying a reply channel
