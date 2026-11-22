@@ -20,27 +20,39 @@ pub(crate) struct Codec {
 
 #[derive(Debug, Error)]
 pub(crate) enum DecoderError {
+    /// Reading from the underlying socket failed. Never produced by the codec itself: the
+    /// Decoder trait requires `From<io::Error>` so `FramedRead` can report read errors with it
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// The length prefix is invalid, e.g. a frame bigger than `Frame::MAX_ENCODED_SIZE`.
+    /// The peer is sending a malformed stream
     #[error("LengthDelimitedCodec error: {0}")]
     LengthDelimitedCodecError(std::io::Error),
 
+    /// The length-delimited bytes are not a valid `Frame`
     #[error("Deserialization failed with error: {0}")]
     Deserialize(std::io::Error),
 }
 
 #[derive(Debug, Error)]
 pub(crate) enum EncoderError {
+    /// Writing to the underlying socket failed. Never produced by the codec itself: the
+    /// Encoder trait requires `From<io::Error>` so `FramedWrite` can report write errors with it
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// The inner length-delimited encoding failed, e.g. a frame bigger than
+    /// `Frame::MAX_ENCODED_SIZE`. Not expected, since frames are bound to that size
     #[error("LengthDelimitedCodec error: {0}")]
     LengthDelimitedCodecError(std::io::Error),
 
+    /// A `Frame` or `Dispatcher` could not be serialized with borsh
     #[error("Serialization failed with error: {0}")]
     Serialize(std::io::Error),
 
+    /// The message could not be split into frames, e.g. it is bigger than
+    /// `Frame::MAX_MESSAGE_SIZE`
     #[error("Frame error: {0}")]
     Frame(#[from] FrameError),
 }
