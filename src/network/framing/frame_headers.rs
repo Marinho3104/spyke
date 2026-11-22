@@ -66,16 +66,16 @@ impl FragmentInfo {
         let index = self.index;
         let total = self.total;
         if index >= total {
-            Err(FragmentInfoError::InvalidSequence { index, total })?
+            return Err(FragmentInfoError::InvalidSequence { index, total });
         }
         if total <= 1 {
-            Err(FragmentInfoError::InvalidTotal(total))?
+            return Err(FragmentInfoError::InvalidTotal(total));
         }
         if total > Self::MAX_TOTAL {
-            Err(FragmentInfoError::TotalTooLarge {
+            return Err(FragmentInfoError::TotalTooLarge {
                 total,
                 max: Self::MAX_TOTAL,
-            })?
+            });
         }
         Ok(())
     }
@@ -125,13 +125,16 @@ mod tests {
     #[test]
     fn fragment_info_error() {
         let fragment_info = FragmentInfo::try_new(MessageId::new(0), 1, 1);
-        assert!(fragment_info.is_err());
+        assert!(matches!(
+            fragment_info,
+            Err(FragmentInfoError::InvalidSequence { index: 1, total: 1 })
+        ));
     }
 
     #[test]
     fn fragment_total_limit() {
         let max = FragmentInfo::MAX_TOTAL;
-        assert!(FragmentInfo::try_new(MessageId::new(0), 0, max).is_ok());
+        FragmentInfo::try_new(MessageId::new(0), 0, max).unwrap();
 
         let result = FragmentInfo::try_new(MessageId::new(0), 0, max + 1);
         assert!(matches!(

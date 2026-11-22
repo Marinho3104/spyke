@@ -50,7 +50,7 @@ impl StateDispatcher {
             (Dispatcher::Ping { protocol, .. }, StateDispatcher::Ping(state)) => {
                 state.update(protocol, flow)?.map(StateDispatcher::Ping)
             }
-            _ => Err(StateDispatcherError::UnexpectedProtocol)?,
+            _ => return Err(StateDispatcherError::UnexpectedProtocol),
         };
         Ok(result)
     }

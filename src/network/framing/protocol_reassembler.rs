@@ -148,7 +148,7 @@ impl ProtocolReassembler {
                 if current_concurrent_reassemblies
                     == self.config.max_concurrent_reassemblies as usize
                 {
-                    Err(ProtocolReassemblerError::ConcurrentReassemblies)?;
+                    return Err(ProtocolReassemblerError::ConcurrentReassemblies);
                 }
                 entry.insert(ReassembledData::try_new(fragment_info, payload)?);
                 None
@@ -414,14 +414,15 @@ mod tests {
 
         for protocol in protocols {
             let encoded = borsh::to_vec(&protocol).unwrap();
-            let mut frames = Frame::split_into_frames(encoded, MessageId::new(0)).unwrap();
+            let mut frames = Frame::split_into_frames(encoded.clone(), MessageId::new(0)).unwrap();
             let frame: Frame = frames.pop().unwrap();
+            assert!(frames.is_empty());
 
             let mut reassembler = reassembler();
-            let dispatcher = reassembler.push(frame);
+            let dispatcher = reassembler.push(frame).unwrap().unwrap();
 
-            assert!(dispatcher.is_ok());
-            assert!(dispatcher.unwrap().is_some());
+            // Dispatcher has no PartialEq, so compare its encoding instead
+            assert_eq!(borsh::to_vec(&dispatcher).unwrap(), encoded);
         }
     }
 
@@ -433,6 +434,9 @@ mod tests {
         let mut reassembler = reassembler();
         let dispatcher = reassembler.push(frame);
 
-        assert!(dispatcher.is_err());
+        assert!(matches!(
+            dispatcher,
+            Err(ProtocolReassemblerError::Borsh(_))
+        ));
     }
 }

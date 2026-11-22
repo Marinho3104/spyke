@@ -39,7 +39,7 @@ impl StateSpec for State {
     fn try_new(protocol: &Self::Protocol, flow: Flow) -> Result<Option<Self>, StateSpecError> {
         let result = match protocol.content {
             Content::Ping => State::Ping(flow),
-            Content::Pong => Err(StateSpecError::InvalidState)?,
+            Content::Pong => return Err(StateSpecError::InvalidState),
         };
         Ok(Some(result))
     }
@@ -52,8 +52,8 @@ impl StateSpec for State {
         let Self::Ping(state_flow) = self;
         let result = match &protocol.content {
             Content::Pong if *state_flow != flow => None,
-            Content::Pong => Err(StateSpecError::InvalidFlow)?,
-            Content::Ping => Err(StateSpecError::InvalidState)?,
+            Content::Pong => return Err(StateSpecError::InvalidFlow),
+            Content::Ping => return Err(StateSpecError::InvalidState),
         };
         Ok(result)
     }

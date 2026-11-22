@@ -76,13 +76,13 @@ impl StateValidator {
                 }
             },
             Vacant(_) if conversation_id.parity() != starter_ids => {
-                Err(StateValidatorError::InvalidConversationId)?
+                return Err(StateValidatorError::InvalidConversationId);
             }
             Vacant(entry) => match StateDispatcher::try_new(dispatcher, flow)? {
                 Some(new_state) if available_space => {
                     entry.insert(new_state);
                 }
-                Some(_) => Err(StateValidatorError::MaxConcurrentProtocols)?,
+                Some(_) => return Err(StateValidatorError::MaxConcurrentProtocols),
                 None => {}
             },
         }
@@ -164,7 +164,7 @@ mod tests {
             let mut validator = state_validator();
 
             for (dispatcher, direction, expected_states) in flow {
-                assert!(validator.update(&dispatcher, direction).is_ok());
+                validator.update(&dispatcher, direction).unwrap();
                 assert_eq!(validator.states.len(), expected_states);
             }
         }
@@ -231,7 +231,7 @@ mod tests {
                 let (last_dispatcher, last_direction) = flow.pop().unwrap();
 
                 for (dispatcher, direction) in flow {
-                    assert!(validator.update(&dispatcher, direction).is_ok());
+                    validator.update(&dispatcher, direction).unwrap();
                 }
 
                 let result = validator.update(&last_dispatcher, last_direction);
@@ -244,8 +244,8 @@ mod tests {
     fn max_concurrent_protocols() {
         let mut validator = StateValidator::new(config(2));
 
-        assert!(validator.update(&ping(1), Inbound).is_ok());
-        assert!(validator.update(&ping(3), Inbound).is_ok());
+        validator.update(&ping(1), Inbound).unwrap();
+        validator.update(&ping(3), Inbound).unwrap();
 
         let result = validator.update(&ping(5), Inbound);
         assert!(matches!(
@@ -254,10 +254,10 @@ mod tests {
         ));
 
         // A protocol that opens no state is still accepted while full
-        assert!(validator.update(&disconnect(7), Inbound).is_ok());
+        validator.update(&disconnect(7), Inbound).unwrap();
 
         // An open conversation can still finish while full, freeing a slot
-        assert!(validator.update(&pong(1), Outbound).is_ok());
-        assert!(validator.update(&ping(5), Inbound).is_ok());
+        validator.update(&pong(1), Outbound).unwrap();
+        validator.update(&ping(5), Inbound).unwrap();
     }
 }

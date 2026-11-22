@@ -120,7 +120,11 @@ mod tests {
     #[test]
     fn invalid_payload_size() {
         let result = Payload::try_new(vec![0; Payload::MAX_SIZE + 1]);
-        assert!(result.is_err())
+        assert!(matches!(
+            result,
+            Err(PayloadError::Size { actual, max })
+                if actual == Payload::MAX_SIZE + 1 && max == Payload::MAX_SIZE
+        ));
     }
 
     #[test]
