@@ -18,6 +18,12 @@ pub(crate) enum PayloadError {
     Size { actual: usize, max: usize },
 }
 
+#[derive(Debug, Error, PartialEq)]
+pub(crate) enum FrameError {
+    #[error("Message is too large: {actual} bytes > {max} bytes")]
+    MessageTooLarge { actual: usize, max: usize },
+}
+
 impl Payload {
     pub(crate) const MAX_SIZE: usize = 512;
     pub(crate) const MAX_ENCODED_SIZE: usize = Payload::MAX_SIZE + 4;
@@ -50,27 +56,43 @@ impl Frame {
         Self { headers, payload }
     }
 
-    pub(crate) fn split_into_frames(data: Vec<u8>, message_id: MessageId) -> Vec<Frame> {
+    /// Largest message that can be split into frames
+    pub(crate) const MAX_MESSAGE_SIZE: usize = FragmentInfo::MAX_TOTAL as usize * Payload::MAX_SIZE;
+
+    pub(crate) fn split_into_frames(
+        data: Vec<u8>,
+        message_id: MessageId,
+    ) -> Result<Vec<Frame>, FrameError> {
         if data.len() <= Payload::MAX_SIZE {
-            // Unwrap safe data is less or equal to max size
-            return vec![Frame::new(
+            // Unwrap safe, data is less or equal to max size
+            return Ok(vec![Frame::new(
                 FrameHeaders::new(None),
                 Payload::try_new(data).unwrap(),
-            )];
+            )]);
         }
 
-        let frames_count = data.len().div_ceil(Payload::MAX_SIZE);
-        data.chunks(Payload::MAX_SIZE)
-            .enumerate()
+        if data.len() > Self::MAX_MESSAGE_SIZE {
+            return Err(FrameError::MessageTooLarge {
+                actual: data.len(),
+                max: Self::MAX_MESSAGE_SIZE,
+            });
+        }
+
+        // Fits in a u16, it is bound to FragmentInfo::MAX_TOTAL by the check above
+        let total = data.len().div_ceil(Payload::MAX_SIZE) as u16;
+        let frames = (0..total)
+            .zip(data.chunks(Payload::MAX_SIZE))
             .map(|(index, chunk)| {
-                // This is safe, logically the index will never be greater than the frames_count
+                // Unwrap safe, 1 < total <= MAX_TOTAL and index < total
                 let headers = FrameHeaders::new(Some(
-                    FragmentInfo::try_new(message_id, index as u16, frames_count as u16).unwrap(),
+                    FragmentInfo::try_new(message_id, index, total).unwrap(),
                 ));
-                // Also safe, the chunk is bound to the max possible size
+                // Unwrap safe, the chunk is bound to the max payload size
                 Frame::new(headers, Payload::try_new(chunk.to_vec()).unwrap())
             })
-            .collect()
+            .collect();
+
+        Ok(frames)
     }
 }
 
@@ -106,7 +128,7 @@ mod tests {
         // Distinct bytes, so lost or reordered data is detected
         let data: Vec<u8> = (0..=Payload::MAX_SIZE).map(|i| i as u8).collect();
         let message_id = MessageId::new(7);
-        let frames = Frame::split_into_frames(data.clone(), message_id);
+        let frames = Frame::split_into_frames(data.clone(), message_id).unwrap();
         assert_eq!(frames.len(), 2);
 
         for (index, frame) in frames.iter().enumerate() {
@@ -121,5 +143,22 @@ mod tests {
             .flat_map(|frame| frame.payload.into_bytes())
             .collect();
         assert_eq!(joined, data);
+    }
+
+    #[test]
+    fn message_size_limit() {
+        let frames =
+            Frame::split_into_frames(vec![0; Frame::MAX_MESSAGE_SIZE], MessageId::new(0)).unwrap();
+        assert_eq!(frames.len(), FragmentInfo::MAX_TOTAL as usize);
+
+        let result =
+            Frame::split_into_frames(vec![0; Frame::MAX_MESSAGE_SIZE + 1], MessageId::new(0));
+        assert_eq!(
+            result,
+            Err(FrameError::MessageTooLarge {
+                actual: Frame::MAX_MESSAGE_SIZE + 1,
+                max: Frame::MAX_MESSAGE_SIZE,
+            })
+        );
     }
 }

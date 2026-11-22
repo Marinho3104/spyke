@@ -5,7 +5,10 @@ use tokio_util::{
 };
 
 use crate::network::{
-    framing::{frame::Frame, frame_headers::MessageId},
+    framing::{
+        frame::{Frame, FrameError},
+        frame_headers::MessageId,
+    },
     protocol::dispatcher::Dispatcher,
 };
 
@@ -37,6 +40,9 @@ pub(crate) enum EncoderError {
 
     #[error("Serialization failed with error: {0}")]
     Serialize(std::io::Error),
+
+    #[error("Frame error: {0}")]
+    Frame(#[from] FrameError),
 }
 
 impl Codec {
@@ -106,9 +112,10 @@ impl Encoder<Dispatcher> for Codec {
 
         // Sequential ids per connection, so a message id is only reused after wrapping around
         let message_id = MessageId::new(self.next_message_id);
+        let frames = Frame::split_into_frames(encoded_dispatcher, message_id)?;
+        // Only consume the id once the message is accepted
         self.next_message_id = self.next_message_id.wrapping_add(1);
 
-        let frames = Frame::split_into_frames(encoded_dispatcher, message_id);
         self.encode(frames, dst)
     }
 }
@@ -116,8 +123,9 @@ impl Encoder<Dispatcher> for Codec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::protocol::{
-        conversation_id::ConversationId, disconnect::Disconnect, dispatcher::Headers,
+    use crate::network::{
+        framing::frame_headers::FragmentInfo,
+        protocol::{conversation_id::ConversationId, disconnect::Disconnect, dispatcher::Headers},
     };
     use tokio_util::bytes::BytesMut;
 
@@ -134,6 +142,25 @@ mod tests {
         codec.encode(dispatcher, &mut buffer).unwrap();
 
         codec.decode(&mut buffer).unwrap().unwrap();
+    }
+
+    #[test]
+    fn encode_decode_max_size_message() {
+        // Distinct bytes, so lost or reordered data is detected
+        let data: Vec<u8> = (0..Frame::MAX_MESSAGE_SIZE).map(|i| i as u8).collect();
+        let frames = Frame::split_into_frames(data.clone(), MessageId::new(3)).unwrap();
+        assert_eq!(frames.len(), FragmentInfo::MAX_TOTAL as usize);
+
+        let mut codec = Codec::new();
+        let mut buffer = BytesMut::new();
+        codec.encode(frames.clone(), &mut buffer).unwrap();
+
+        let mut decoded = Vec::new();
+        while let Some(frame) = codec.decode(&mut buffer).unwrap() {
+            decoded.push(frame);
+        }
+        assert!(buffer.is_empty());
+        assert_eq!(decoded, frames);
     }
 
     #[test]
@@ -156,13 +183,16 @@ mod tests {
     #[test]
     fn invalid_fragment_info() {
         // (index, total, valid): the valid pair proves the raw layout below matches a Frame
-        let fragments: [(u16, u16, bool); 6] = [
+        let max = FragmentInfo::MAX_TOTAL;
+        let fragments: [(u16, u16, bool); 8] = [
             (0, 2, true),
+            (0, max, true),
             (0, 0, false),
             (0, 1, false),
             (1, 1, false),
             (2, 1, false),
             (2, 2, false),
+            (0, max + 1, false),
         ];
 
         for (index, total, valid) in fragments {

@@ -21,6 +21,9 @@ pub(crate) enum FragmentInfoError {
 
     #[error("Fragment total must be greater than 1: {0} <= 1")]
     InvalidTotal(u16),
+
+    #[error("Fragment total is too large: {total} > {max}")]
+    TotalTooLarge { total: u16, max: u16 },
 }
 
 impl MessageId {
@@ -30,6 +33,9 @@ impl MessageId {
 }
 
 impl FragmentInfo {
+    /// Max fragments per message, so the largest message is MAX_TOTAL * Payload::MAX_SIZE (64 KiB)
+    pub(crate) const MAX_TOTAL: u16 = 128;
+
     pub(crate) fn try_new(
         message_id: MessageId,
         index: u16,
@@ -64,6 +70,12 @@ impl FragmentInfo {
         }
         if total <= 1 {
             Err(FragmentInfoError::InvalidTotal(total))?
+        }
+        if total > Self::MAX_TOTAL {
+            Err(FragmentInfoError::TotalTooLarge {
+                total,
+                max: Self::MAX_TOTAL,
+            })?
         }
         Ok(())
     }
@@ -114,5 +126,17 @@ mod tests {
     fn fragment_info_error() {
         let fragment_info = FragmentInfo::try_new(MessageId::new(0), 1, 1);
         assert!(fragment_info.is_err());
+    }
+
+    #[test]
+    fn fragment_total_limit() {
+        let max = FragmentInfo::MAX_TOTAL;
+        assert!(FragmentInfo::try_new(MessageId::new(0), 0, max).is_ok());
+
+        let result = FragmentInfo::try_new(MessageId::new(0), 0, max + 1);
+        assert!(matches!(
+            result,
+            Err(FragmentInfoError::TotalTooLarge { total, max: m }) if total == max + 1 && m == max
+        ));
     }
 }
