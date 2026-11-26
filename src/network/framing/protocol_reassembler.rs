@@ -3,7 +3,7 @@ use crate::network::{
         frame::{Frame, Payload},
         frame_headers::{FragmentInfo, MessageId},
     },
-    protocol::dispatcher::Dispatcher,
+    protocol::message::Message,
 };
 use std::{
     collections::{
@@ -129,7 +129,7 @@ impl ProtocolReassembler {
         &mut self,
         fragment_info: FragmentInfo,
         payload: Payload,
-    ) -> Result<Option<Dispatcher>, ProtocolReassemblerError> {
+    ) -> Result<Option<Message>, ProtocolReassemblerError> {
         let current_concurrent_reassemblies = self.data.len();
 
         let result = match self.data.entry(fragment_info.message_id()) {
@@ -158,16 +158,14 @@ impl ProtocolReassembler {
         Ok(result)
     }
 
-    fn handle_unique_frame(
-        payload: Payload,
-    ) -> Result<Option<Dispatcher>, ProtocolReassemblerError> {
+    fn handle_unique_frame(payload: Payload) -> Result<Option<Message>, ProtocolReassemblerError> {
         Ok(Some(borsh::from_slice(payload.as_bytes())?))
     }
 
     pub(crate) fn push(
         &mut self,
         frame: Frame,
-    ) -> Result<Option<Dispatcher>, ProtocolReassemblerError> {
+    ) -> Result<Option<Message>, ProtocolReassemblerError> {
         match frame.headers.0 {
             Some(fragment_info) => self.handle_fragmented_frame(fragment_info, frame.payload),
             None => Self::handle_unique_frame(frame.payload),
@@ -183,7 +181,7 @@ mod tests {
         protocol::{
             conversation_id::ConversationId,
             disconnect::Disconnect,
-            dispatcher::Headers,
+            message::{Headers, Protocol},
             ping::{Content as PingContent, Ping},
         },
     };
@@ -223,7 +221,7 @@ mod tests {
     }
 
     fn reassembled_data_error(
-        result: Result<Option<Dispatcher>, ProtocolReassemblerError>,
+        result: Result<Option<Message>, ProtocolReassemblerError>,
     ) -> ReassembledDataError {
         match result {
             Err(ProtocolReassemblerError::ReassembledData(error)) => error,
@@ -231,8 +229,8 @@ mod tests {
         }
     }
 
-    // No Dispatcher spans more than one frame yet, so a completed fragmented message is never a
-    // valid Dispatcher. The slot is freed the same way whether the decoding succeeds or fails.
+    // No Message spans more than one frame yet, so a completed fragmented message is never a
+    // valid Message. The slot is freed the same way whether the decoding succeeds or fails.
     fn assert_completes_with_decode_error(reassembler: &mut ProtocolReassembler, frame: Frame) {
         assert!(matches!(
             reassembler.push(frame),
@@ -398,31 +396,23 @@ mod tests {
     #[test]
     fn non_fragmented_protocol() {
         let protocols = [
-            Dispatcher::Disconnect {
-                protocol: Disconnect::new(),
-                headers: Headers::new(ConversationId::new(0)),
-            },
-            Dispatcher::Ping {
-                protocol: Ping::new(PingContent::Ping),
-                headers: Headers::new(ConversationId::new(0)),
-            },
-            Dispatcher::Ping {
-                protocol: Ping::new(PingContent::Pong),
-                headers: Headers::new(ConversationId::new(0)),
-            },
+            Protocol::Disconnect(Disconnect::new()),
+            Protocol::Ping(Ping::new(PingContent::Ping)),
+            Protocol::Ping(Ping::new(PingContent::Pong)),
         ];
 
         for protocol in protocols {
-            let encoded = borsh::to_vec(&protocol).unwrap();
+            let message = Message::new(Headers::new(ConversationId::new(0)), protocol);
+            let encoded = borsh::to_vec(&message).unwrap();
             let mut frames = Frame::split_into_frames(encoded.clone(), MessageId::new(0)).unwrap();
             let frame: Frame = frames.pop().unwrap();
             assert!(frames.is_empty());
 
             let mut reassembler = reassembler();
-            let dispatcher = reassembler.push(frame).unwrap().unwrap();
+            let decoded = reassembler.push(frame).unwrap().unwrap();
 
-            // Dispatcher has no PartialEq, so compare its encoding instead
-            assert_eq!(borsh::to_vec(&dispatcher).unwrap(), encoded);
+            // Message has no PartialEq, so compare its encoding instead
+            assert_eq!(borsh::to_vec(&decoded).unwrap(), encoded);
         }
     }
 
@@ -432,11 +422,8 @@ mod tests {
         let frame = Frame::new(headers, Payload::try_new(vec![]).unwrap());
 
         let mut reassembler = reassembler();
-        let dispatcher = reassembler.push(frame);
+        let result = reassembler.push(frame);
 
-        assert!(matches!(
-            dispatcher,
-            Err(ProtocolReassemblerError::Borsh(_))
-        ));
+        assert!(matches!(result, Err(ProtocolReassemblerError::Borsh(_))));
     }
 }

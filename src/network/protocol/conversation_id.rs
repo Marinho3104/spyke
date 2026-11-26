@@ -15,12 +15,23 @@ impl ConversationId {
         Self(conversation_id)
     }
 
+    pub(crate) fn first(parity: ConversationIdParity) -> Self {
+        Self(match parity {
+            ConversationIdParity::Even => 0,
+            ConversationIdParity::Odd => 1,
+        })
+    }
+
     pub(crate) fn parity(&self) -> ConversationIdParity {
         if self.0.is_multiple_of(2) {
             ConversationIdParity::Even
         } else {
             ConversationIdParity::Odd
         }
+    }
+
+    pub(crate) fn advance(&mut self) {
+        self.0 = self.0.wrapping_add(2);
     }
 }
 

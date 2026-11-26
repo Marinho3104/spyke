@@ -9,7 +9,7 @@ use crate::network::{
         frame::{Frame, FrameError},
         frame_headers::MessageId,
     },
-    protocol::dispatcher::Dispatcher,
+    protocol::message::Message,
 };
 
 #[derive(Debug)]
@@ -47,7 +47,7 @@ pub(crate) enum EncoderError {
     #[error("LengthDelimitedCodec error: {0}")]
     LengthDelimitedCodecError(std::io::Error),
 
-    /// A `Frame` or `Dispatcher` could not be serialized with borsh
+    /// A `Frame` or `Message` could not be serialized with borsh
     #[error("Serialization failed with error: {0}")]
     Serialize(std::io::Error),
 
@@ -116,15 +116,15 @@ impl Encoder<Vec<Frame>> for Codec {
     }
 }
 
-impl Encoder<Dispatcher> for Codec {
+impl Encoder<Message> for Codec {
     type Error = EncoderError;
 
-    fn encode(&mut self, item: Dispatcher, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let encoded_dispatcher = borsh::to_vec(&item).map_err(EncoderError::Serialize)?;
+    fn encode(&mut self, item: Message, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let encoded_message = borsh::to_vec(&item).map_err(EncoderError::Serialize)?;
 
         // Sequential ids per connection, so a message id is only reused after wrapping around
         let message_id = MessageId::new(self.next_message_id);
-        let frames = Frame::split_into_frames(encoded_dispatcher, message_id)?;
+        let frames = Frame::split_into_frames(encoded_message, message_id)?;
         // Only consume the id once the message is accepted
         self.next_message_id = self.next_message_id.wrapping_add(1);
 
@@ -137,21 +137,25 @@ mod tests {
     use super::*;
     use crate::network::{
         framing::frame_headers::FragmentInfo,
-        protocol::{conversation_id::ConversationId, disconnect::Disconnect, dispatcher::Headers},
+        protocol::{
+            conversation_id::ConversationId,
+            disconnect::Disconnect,
+            message::{Headers, Protocol},
+        },
     };
     use tokio_util::bytes::BytesMut;
 
     #[test]
     fn encode_decode() {
-        let dispatcher = Dispatcher::Disconnect {
-            protocol: Disconnect::new(),
-            headers: Headers::new(ConversationId::new(0)),
-        };
+        let message = Message::new(
+            Headers::new(ConversationId::new(0)),
+            Protocol::Disconnect(Disconnect::new()),
+        );
 
         let mut codec = Codec::new();
         let mut buffer = BytesMut::new();
 
-        codec.encode(dispatcher, &mut buffer).unwrap();
+        codec.encode(message, &mut buffer).unwrap();
 
         codec.decode(&mut buffer).unwrap().unwrap();
     }
