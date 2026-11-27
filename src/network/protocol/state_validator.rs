@@ -13,13 +13,14 @@ use crate::network::protocol::{
 };
 
 pub(crate) struct Config {
-    pub(crate) max_concurrent_protocols: u8,
+    pub(crate) max_conversations_per_side: u8,
     pub(crate) local_ids: ConversationIdParity,
 }
 
 pub(crate) struct StateValidator {
     config: Config,
-    states: HashMap<ConversationId, ProtocolState>,
+    local: HashMap<ConversationId, ProtocolState>,
+    remote: HashMap<ConversationId, ProtocolState>,
     next_conversation_id: ConversationId,
 }
 
@@ -28,17 +29,20 @@ pub(crate) enum StateValidatorError {
     #[error("Protocol state error: {0}")]
     ProtocolState(#[from] ProtocolStateError),
 
-    #[error("the max number of concurrent protocols was reached")]
-    MaxConcurrentProtocols,
+    #[error("the other side exceeded the limit of open conversations")]
+    RemoteLimitExceeded,
+
+    #[error("this side reached its limit of open conversations")]
+    LocalLimitReached,
 
     #[error("the conversation id belongs to the other side")]
     InvalidConversationId,
 }
 
 impl Config {
-    pub(crate) fn new(max_concurrent_protocols: u8, local_ids: ConversationIdParity) -> Self {
+    pub(crate) fn new(max_conversations_per_side: u8, local_ids: ConversationIdParity) -> Self {
         Self {
-            max_concurrent_protocols,
+            max_conversations_per_side,
             local_ids,
         }
     }
@@ -49,7 +53,8 @@ impl StateValidator {
         Self {
             next_conversation_id: ConversationId::first(config.local_ids),
             config,
-            states: HashMap::new(),
+            local: HashMap::new(),
+            remote: HashMap::new(),
         }
     }
 
@@ -59,7 +64,6 @@ impl StateValidator {
         flow: Flow,
     ) -> Result<(), StateValidatorError> {
         let conversation_id = message.headers.conversation_id;
-        let available_space = self.available_space();
 
         // Whoever starts a conversation must use an id from its own range
         let starter_ids = match flow {
@@ -67,7 +71,15 @@ impl StateValidator {
             Flow::Inbound => self.config.local_ids.opposite(),
         };
 
-        match self.states.entry(conversation_id) {
+        let limit = self.config.max_conversations_per_side as usize;
+        let (states, limit_error) = if conversation_id.parity() == self.config.local_ids {
+            (&mut self.local, StateValidatorError::LocalLimitReached)
+        } else {
+            (&mut self.remote, StateValidatorError::RemoteLimitExceeded)
+        };
+        let available_space = states.len() < limit;
+
+        match states.entry(conversation_id) {
             Occupied(mut protocol_state) => {
                 match protocol_state.get().update(&message.protocol, flow) {
                     Ok(Some(new_state)) => *protocol_state.get_mut() = new_state,
@@ -85,7 +97,7 @@ impl StateValidator {
                 Some(new_state) if available_space => {
                     entry.insert(new_state);
                 }
-                Some(_) => return Err(StateValidatorError::MaxConcurrentProtocols),
+                Some(_) => return Err(limit_error),
                 None => {}
             },
         }
@@ -105,13 +117,13 @@ impl StateValidator {
         let state = ProtocolState::try_new(protocol, Flow::Outbound)?;
 
         // A protocol that opens no state takes no slot, the same as in `update`
-        if state.is_some() && !self.available_space() {
-            return Err(StateValidatorError::MaxConcurrentProtocols);
+        if state.is_some() && !self.local_space() {
+            return Err(StateValidatorError::LocalLimitReached);
         }
 
         let conversation_id = self.new_conversation_id();
         if let Some(state) = state {
-            self.states.insert(conversation_id, state);
+            self.local.insert(conversation_id, state);
         }
         Ok(conversation_id)
     }
@@ -122,14 +134,14 @@ impl StateValidator {
         loop {
             let candidate = self.next_conversation_id;
             self.next_conversation_id.advance();
-            if !self.states.contains_key(&candidate) {
+            if !self.local.contains_key(&candidate) {
                 return candidate;
             }
         }
     }
 
-    fn available_space(&self) -> bool {
-        self.states.len() < self.config.max_concurrent_protocols as usize
+    fn local_space(&self) -> bool {
+        self.local.len() < self.config.max_conversations_per_side as usize
     }
 }
 
@@ -149,8 +161,12 @@ mod tests {
     const LOCAL_ID: u16 = 0;
     const REMOTE_ID: u16 = 1;
 
-    fn config(max_concurrent_protocols: u8) -> Config {
-        Config::new(max_concurrent_protocols, ConversationIdParity::Even)
+    fn config(max_conversations_per_side: u8) -> Config {
+        Config::new(max_conversations_per_side, ConversationIdParity::Even)
+    }
+
+    fn open_conversations(validator: &StateValidator) -> usize {
+        validator.local.len() + validator.remote.len()
     }
 
     fn state_validator() -> StateValidator {
@@ -219,7 +235,7 @@ mod tests {
 
             for (message, direction, expected_states) in flow {
                 validator.update(&message, direction).unwrap();
-                assert_eq!(validator.states.len(), expected_states);
+                assert_eq!(open_conversations(&validator), expected_states);
             }
         }
     }
@@ -295,17 +311,14 @@ mod tests {
     }
 
     #[test]
-    fn max_concurrent_protocols() {
+    fn remote_limit() {
         let mut validator = StateValidator::new(config(2));
 
         validator.update(&ping(1), Inbound).unwrap();
         validator.update(&ping(3), Inbound).unwrap();
 
         let result = validator.update(&ping(5), Inbound);
-        assert!(matches!(
-            result,
-            Err(StateValidatorError::MaxConcurrentProtocols)
-        ));
+        assert_eq!(result, Err(StateValidatorError::RemoteLimitExceeded));
 
         // A protocol that opens no state is still accepted while full
         validator.update(&disconnect(7), Inbound).unwrap();
@@ -313,6 +326,26 @@ mod tests {
         // An open conversation can still finish while full, freeing a slot
         validator.update(&pong(1), Outbound).unwrap();
         validator.update(&ping(5), Inbound).unwrap();
+    }
+
+    #[test]
+    fn limits_are_per_side() {
+        let mut validator = StateValidator::new(config(1));
+
+        let local_id = validator.open(&ping(0).protocol).unwrap();
+        validator.update(&ping(1), Inbound).unwrap();
+
+        let result = validator.open(&ping(0).protocol);
+        assert_eq!(result, Err(StateValidatorError::LocalLimitReached));
+        let result = validator.update(&ping(2), Outbound);
+        assert_eq!(result, Err(StateValidatorError::LocalLimitReached));
+        let result = validator.update(&ping(3), Inbound);
+        assert_eq!(result, Err(StateValidatorError::RemoteLimitExceeded));
+
+        validator.update(&pong(local_id.0), Inbound).unwrap();
+        validator.open(&ping(0).protocol).unwrap();
+        let result = validator.update(&ping(3), Inbound);
+        assert_eq!(result, Err(StateValidatorError::RemoteLimitExceeded));
     }
 
     #[test]
@@ -327,7 +360,7 @@ mod tests {
                 let conversation_id = validator.open(&ping(0).protocol).unwrap();
                 assert_eq!(conversation_id, ConversationId::new(id));
             }
-            assert_eq!(validator.states.len(), expected.len());
+            assert_eq!(validator.local.len(), expected.len());
         }
     }
 
@@ -336,11 +369,11 @@ mod tests {
         let mut validator = state_validator();
 
         let conversation_id = validator.open(&ping(0).protocol).unwrap();
-        assert_eq!(validator.states.len(), 1);
+        assert_eq!(validator.local.len(), 1);
 
         // The reply ends the conversation opened above
         validator.update(&pong(conversation_id.0), Inbound).unwrap();
-        assert!(validator.states.is_empty());
+        assert!(validator.local.is_empty());
     }
 
     #[test]
@@ -372,7 +405,7 @@ mod tests {
         validator.open(&ping(0).protocol).unwrap();
 
         let result = validator.open(&ping(0).protocol);
-        assert_eq!(result, Err(StateValidatorError::MaxConcurrentProtocols));
+        assert_eq!(result, Err(StateValidatorError::LocalLimitReached));
         // The failed open did not use up an id
         assert_eq!(validator.next_conversation_id, ConversationId::new(2));
 
@@ -389,7 +422,7 @@ mod tests {
 
         let result = validator.open(&pong(0).protocol);
         assert_eq!(result, Err(spec_error(StateSpecError::InvalidState)));
-        assert!(validator.states.is_empty());
+        assert!(validator.local.is_empty());
         assert_eq!(validator.next_conversation_id, ConversationId::new(0));
     }
 }
